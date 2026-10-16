@@ -73,6 +73,60 @@ editing one file is usually fine; two agents independently changing a
 *contract* in the same file is a semantic conflict no textual merge catches,
 and only the suite will find it.
 
+## Agents talking to each other mid-wave
+
+There is no bead-id → agent lookup, and agents can't list their siblings.
+Two channels work today. Put both in every prompt of a wave where two
+issues touch the same code.
+
+**1. The bead is the mailbox.** To tell the agent working on another bead
+something, comment on *that* bead:
+
+```bash
+bd comments add <their-id> "from <my-id>: <what changed>, <file:function>, <what they must do>"
+bd comments <my-id>          # read what others left for me
+```
+
+Always give the message the sender's bead id, the exact file and symbol,
+and whether it's a heads-up or a blocker. Comments are durable, so they also
+leave a record of why two commits interact.
+
+**2. Report to the coordinator** for anything that changes the plan. The
+coordinator relays with `SendMessage` and decides conflicts. Agents can't
+see each other's reports, only the coordinator can.
+
+What to say, and when:
+
+- **Same file, different code:** no message needed. Textual merges handle
+  it. Just list the file in your report.
+- **Same function or block:** comment on the other bead *before* editing,
+  naming the lines you'll change. If both of you need the same lines, stop
+  and report to the coordinator, who picks the order. Don't race.
+- **A contract change** (a signature, return shape, config key, schema,
+  route, or what a test fixture means): comment on every bead in the wave
+  that might call it, and say so in your report. This is the semantic
+  conflict no textual merge catches.
+- **You found the other bead's premise wrong:** comment on it, and report.
+  Don't fix their issue in your branch.
+
+When to check your own bead's comments: right after starting, before
+editing any file the prompt named as shared, and before writing your
+report. There are no push notifications, so a message only works if it's
+read at those points.
+
+Two traps:
+
+- **bd calls in one project contend for embedded Dolt's lock.** Keep
+  messages to a few per agent, never poll in a loop, and retry once after a
+  pause if a call hangs.
+- **Worktree agents must address the main checkout's database**:
+  `bd -C <main checkout> comments …`. A worktree's own `.beads/` may be a
+  stale copy, and comments written there are lost.
+
+The coordinator puts the wave's roster in each prompt: every bead id in the
+wave, its one-line goal, and the files it's expected to touch. Without the
+roster, an agent can't know whom to tell.
+
 ## Record the wave
 
 Use the `wave` script (`wave` from this repo's bin/; install: see README)
