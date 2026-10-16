@@ -17,12 +17,15 @@ Design rationale and the bd behaviour found while building it are in
 
 ## Dependencies
 
-- **bd** (the beads CLI) on `PATH`. Developed against `bd version 1.2.2`;
-  older versions are untested.
+- **bd** (the beads CLI, [gastownhall/beads](https://github.com/gastownhall/beads))
+  on `PATH`. Developed against `bd version 1.2.2`; older versions are
+  untested.
 - **beads.el** ([r0man/beads.el](https://github.com/r0man/beads.el)),
-  version 0.1.0, for the dashboard.
+  version 0.1.0, for the dashboard. It isn't on MELPA, so install it from
+  GitHub before waves-dashboard (see [Install](#install)).
 - **vui** ([d12frosted/vui.el](https://github.com/d12frosted/vui.el)),
   1.0.0 or later (a MELPA date version such as 20260902 satisfies this).
+  It installs from MELPA automatically as a dependency.
 - Emacs 29.1 or later (what beads.el and vui require; tested on 30.2).
 - Python 3.7+ for `bin/wave` (standard library only).
 - git, for the merge history the dashboard reads.
@@ -33,28 +36,42 @@ Design rationale and the bd behaviour found while building it are in
 
 `use-package`'s `:vc` keyword (built into Emacs 30) clones the repository
 into `package-user-dir`, byte-compiles it and generates its autoloads. That
-is the whole install, and the clone itself isn't needed. A complete init
-file setup, including the dependencies:
+is the whole install, and the clone itself isn't needed.
+
+**Install beads.el first.** waves-dashboard declares its dependencies in
+`Package-Requires` (`beads`, `vui`), but package.el can only fetch
+dependencies from package archives. vui is on MELPA, so it comes
+automatically. [beads.el](https://github.com/r0man/beads.el) is not on any
+archive, so it needs its own `:vc` block, **placed before** waves-dashboard's.
+beads.el keeps its sources in `lisp/`, hence `:lisp-dir`. Its own
+dependencies (transient, sesman, vui) come from the archives. See its
+[README](https://github.com/r0man/beads.el#readme) for its setup and
+commands.
 
 ```elisp
 (require 'package)
 (add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/"))
 (package-initialize)
 
-;; vui comes from MELPA
-(use-package vui :ensure t)
-
-;; beads.el is not on MELPA, so install it from GitHub; its sources are in lisp/
+;; beads.el: not on MELPA, so from GitHub. Must come before waves-dashboard.
 (use-package beads
   :vc (:url "https://github.com/r0man/beads.el" :lisp-dir "lisp" :rev :newest))
 
+;; vui comes from MELPA as a declared dependency
 (use-package waves-dashboard
   :vc (:url "https://github.com/jdblair/waves-dashboard" :rev :newest)
   :after beads)
 ```
 
-Leave out the `vui` and `beads` blocks if you already install those another
-way. `:rev :newest` tracks the tip of the default branch (`trunk`). Without
+With the blocks the other way round, the first start installs
+waves-dashboard but warns `Failed to install the following dependencies:
+beads` and `Cannot load waves-dashboard`. beads.el installs right after, and
+from the next start on everything works. So the order only costs one
+restart, but beads-first starts clean. Both orders were checked on a fresh
+`package-user-dir` (Emacs 30.2). Skip the beads block if you already
+install beads.el another way.
+
+`:rev :newest` tracks the tip of the default branch (`trunk`). Without
 it, package-vc installs the latest release: the last commit that changed the
 `Version:` header.
 
@@ -73,11 +90,11 @@ normal for any VC package.
   point into `~/.emacs.d/elpa/waves-dashboard/`.
 - **Uninstall:** `M-x package-delete RET waves-dashboard`, and remove the
   `use-package` block.
-- **Emacs 29:** `use-package` has no `:vc` there. Run
-  `M-x package-vc-install RET https://github.com/jdblair/waves-dashboard`
-  once (and the same for beads.el, with its `lisp/` directory; see the
-  `package-vc-selected-packages` docstring for `:lisp-dir`). Then use a plain
-  `(use-package waves-dashboard :after beads)`.
+- **Emacs 29:** `use-package` has no `:vc` there. Install once by hand,
+  beads.el first:
+  `(package-vc-install '(beads :url "https://github.com/r0man/beads.el" :lisp-dir "lisp"))`,
+  then `M-x package-vc-install RET https://github.com/jdblair/waves-dashboard`.
+  Then use a plain `(use-package waves-dashboard :after beads)`.
 
 ### wave and the bead-waves skill
 
