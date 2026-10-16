@@ -68,6 +68,10 @@ Each continuation lines up under the text it continues: an issue's
 title, a merge's subject, an event's text.  Nil truncates lines."
   :type 'boolean)
 
+(defface waves-dashboard-requeued
+  '((t :inherit shadow))
+  "Face for a bead that has moved on to a later wave.")
+
 (defface waves-dashboard-totals
   '((t :inherit font-lock-function-name-face))
   "Face for the totals header toggled with \\`T'.")
@@ -112,7 +116,7 @@ up when this file loads rather than as a broken buffer."
                (:copier nil))
   "One wave: its recorded facts and what the data says happened."
   name title dispatched deployed deployed-approx sha
-  beads merges opened state start end)
+  beads merges opened state start end requeued)
 
 (defun waves-dashboard--time (s)
   "Return ISO-8601 string S as a float time, or nil."
@@ -315,6 +319,7 @@ Running and shipped waves come newest first, queued ones after."
                                      (or (plist-get b :time) 0)))))
         (waves-dashboard--settle w))
       (waves-dashboard--assign-opened waves wave-of created now)
+      (waves-dashboard--mark-requeued waves)
       (let ((active (cl-remove-if (lambda (w) (eq (waves-dashboard-wave-state w)
                                                   'queued))
                                   waves))
@@ -330,6 +335,57 @@ Running and shipped waves come newest first, queued ones after."
          (sort queued (lambda (a b)
                         (waves-dashboard--name< (waves-dashboard-wave-name a)
                                                 (waves-dashboard-wave-name b)))))))))
+
+;;; Re-queued beads
+
+(defun waves-dashboard--later-p (a b)
+  "Non-nil when wave B comes after wave A.
+A wave that hasn't started comes after every started one; equal
+starts, or two unstarted waves, are ordered by name."
+  (let ((sa (waves-dashboard-wave-start a))
+        (sb (waves-dashboard-wave-start b)))
+    (cond ((and sa sb (/= sa sb)) (> sb sa))
+          ((and sa (null sb)) t)
+          ((and (null sa) sb) nil)
+          (t (waves-dashboard--name< (waves-dashboard-wave-name a)
+                                     (waves-dashboard-wave-name b))))))
+
+(defun waves-dashboard--mark-requeued (waves)
+  "Record on each of WAVES which of its open beads moved to a later wave.
+A bead is re-queued when it is not closed and also carries the label
+of a later wave that is queued or in flight.  Sets each wave's
+`requeued' slot to an alist of bead id . later wave name, naming the
+latest such wave."
+  (let ((by-name (make-hash-table :test 'equal)))
+    (dolist (w waves) (puthash (waves-dashboard-wave-name w) w by-name))
+    (dolist (w waves)
+      (let (marks)
+        (dolist (b (waves-dashboard-wave-beads w))
+          (unless (equal (alist-get 'status b) "closed")
+            (let (target)
+              (dolist (name (waves-dashboard--wave-labels b))
+                (let ((other (gethash name by-name)))
+                  (when (and other (not (eq other w))
+                             (memq (waves-dashboard-wave-state other)
+                                   '(queued in-flight))
+                             (waves-dashboard--later-p w other)
+                             (or (null target)
+                                 (waves-dashboard--later-p target other)))
+                    (setq target other))))
+              (when target
+                (push (cons (alist-get 'id b) (waves-dashboard-wave-name target))
+                      marks)))))
+        (setf (waves-dashboard-wave-requeued w) (nreverse marks))))))
+
+(defun waves-dashboard--all-requeued-p (w)
+  "Non-nil when every bead of wave W is closed or re-queued.
+At least one has to be re-queued."
+  (let ((marks (waves-dashboard-wave-requeued w)))
+    (and marks
+         (cl-every (lambda (b)
+                     (or (equal (alist-get 'status b) "closed")
+                         (assoc (alist-get 'id b) marks)))
+                   (waves-dashboard-wave-beads w)))))
 
 ;;; Totals
 
@@ -524,28 +580,48 @@ Only has an effect when `waves-dashboard-wrap' is on."
   "Return a `beads-issue' for bead ALIST."
   (beads-from-json 'beads-issue alist))
 
-(defun waves-dashboard--title-column (alist)
-  "Return the column where beads puts bead ALIST's title in an issue line.
+(defun waves-dashboard--issue-head (alist)
+  "Return the columns before the title in bead ALIST's issue line.
 Mirrors the format in `beads-section--issue-line-vnode'."
   (let ((p (alist-get 'priority alist)))
-    (length (format "  %-14s %-4s %-10s %-14s "
-                    (or (alist-get 'id alist) "")
-                    (if p (format "P%d" p) "--")
-                    (or (alist-get 'issue_type alist) "")
-                    (or (alist-get 'status alist) "")))))
+    (format "  %-14s %-4s %-10s %-14s "
+            (or (alist-get 'id alist) "")
+            (if p (format "P%d" p) "--")
+            (or (alist-get 'issue_type alist) "")
+            (or (alist-get 'status alist) ""))))
 
-(defun waves-dashboard--issue-row (alist &optional suffix)
+(defun waves-dashboard--title-column (alist)
+  "Return the column where beads puts bead ALIST's title in an issue line."
+  (length (waves-dashboard--issue-head alist)))
+
+(defun waves-dashboard--issue-row (alist &optional suffix dim)
   "Return the beads issue line for bead ALIST, with optional SUFFIX text.
-When wrapping, continuation lines align under the title."
+DIM draws the whole line in `waves-dashboard-requeued'.  beads' own
+row forces its face, so a dim row is built the same way (columns,
+section property, RET visits) with that face instead.  When
+wrapping, continuation lines align under the title."
   (let* ((hang (and waves-dashboard-wrap
                     `(space :align-to ,(waves-dashboard--title-column alist))))
-         (row (beads-section--issue-line-vnode
-               (waves-dashboard--issue alist)
-               (and hang (list 'wrap-prefix hang)))))
+         (props (and hang (list 'wrap-prefix hang)))
+         (issue (waves-dashboard--issue alist))
+         (row (if dim
+                  (let ((id (alist-get 'id alist)))
+                    (vui-button
+                        (beads-section--propertize
+                         (concat (waves-dashboard--issue-head alist)
+                                 (or (alist-get 'title alist) ""))
+                         (beads-issue-section :issue issue) props)
+                      :no-decoration t
+                      :face 'waves-dashboard-requeued
+                      :help-echo nil
+                      :on-click (lambda () (beads-show id))))
+                (beads-section--issue-line-vnode issue props))))
     (if suffix
         (vui-hstack :spacing 0 row
-                    (apply #'vui-text suffix :face 'waves-dashboard-detail
-                           (and hang (list 'wrap-prefix hang))))
+                    (apply #'vui-text suffix
+                           :face (if dim 'waves-dashboard-requeued
+                                   'waves-dashboard-detail)
+                           props))
       row)))
 
 (defun waves-dashboard--state-icon (state)
@@ -568,13 +644,16 @@ When wrapping, continuation lines align under the title."
                            (format " (%s)" sha) "")))
               ('done " · all closed, no deploy")
               ('in-flight " · in flight")
-              (_ " · queued")))))
+              (_ " · queued"))
+            (if (waves-dashboard--all-requeued-p w) " · re-queued" ""))))
 
 (defun waves-dashboard--default-collapsed (waves)
   "Return the wave names in WAVES that start out collapsed."
   (let ((shipped 0) names)
     (dolist (w waves)
       (pcase (waves-dashboard-wave-state w)
+        ((guard (waves-dashboard--all-requeued-p w))
+         (push (waves-dashboard-wave-name w) names))
         ('queued (push (waves-dashboard-wave-name w) names))
         ((or 'shipped 'done)
          (when (> (cl-incf shipped) waves-dashboard-expanded-shipped)
@@ -632,7 +711,13 @@ COLLAPSED-P folds it; ON-TOGGLE is the header click callback."
                             (waves-dashboard-wave-start w))))
                  :face 'waves-dashboard-detail)))
         (if beads
-            (mapcar #'waves-dashboard--issue-row beads)
+            (let ((marks (waves-dashboard-wave-requeued w)))
+              (mapcar (lambda (b)
+                        (if-let* ((to (cdr (assoc (alist-get 'id b) marks))))
+                            (waves-dashboard--issue-row
+                             b (format "  → wave-%s" to) t)
+                          (waves-dashboard--issue-row b)))
+                      beads))
           (list (beads-dashboard--empty-line "No labelled beads.")))
         (when merges
           (cons (waves-dashboard--subheading (format "Merges (%d)" (length merges)))

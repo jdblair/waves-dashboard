@@ -80,6 +80,11 @@ load the package. package.el also records it in `package-selected-packages`
 and `package-vc-selected-packages` in your `custom-set-variables`, which is
 normal for any VC package.
 
+Long lines wrap to the window width, each continuation lined up under the
+text it continues (an issue's title, a merge's subject). Set
+`waves-dashboard-wrap` to nil to truncate lines instead. You don't need
+`visual-line-mode`.
+
 - **Use:** `M-x waves-dashboard` in a beads project (see
   [Reading the dashboard](#reading-the-dashboard)).
 - **Upgrade:** `M-x package-vc-upgrade RET waves-dashboard`, or
@@ -156,8 +161,15 @@ wave's latest close.
 "In flight" doesn't tell you why. The wave may still be being worked, or a
 bead may have moved to a later wave and kept its old label (`wave dispatch`
 adds labels and never removes them), or a bead may have been abandoned
-open. To let an old wave finish, remove the old label from beads that moved
-on.
+open.
+
+The dashboard does mark the second case. An open bead that also carries the
+label of a *later* wave, one that's queued or in flight, is drawn dimmed in
+the earlier wave (face `waves-dashboard-requeued`) with `→ wave-N` after it.
+When every bead of a wave is closed or re-queued like this, the wave starts
+collapsed and its header ends in `· re-queued`. Its state doesn't change. To
+let an old wave finish properly, remove the old label from the beads that
+moved on.
 
 Under the header, a wave's first line says when it started:
 

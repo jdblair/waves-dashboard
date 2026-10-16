@@ -201,4 +201,70 @@
     (should-not (get-text-property 0 'wrap-prefix
                                    (waves-dashboard--hang "x" 4)))))
 
+(defun wdt--requeue-model (&rest extra-beads)
+  "Wave 1 started 10:00, wave 2 at 11:00, wave 3 at 10:30 and shipped.
+demo-a (open) is in waves 1 and 2, demo-b (closed) only in wave 1.
+EXTRA-BEADS are added as they are."
+  (let ((beads (append
+                (list '((id . "demo-a") (status . "open") (labels "wave-1" "wave-2"))
+                      '((id . "demo-b") (status . "closed") (labels "wave-1")
+                        (closed_at . "2026-10-16T10:30:00Z"))
+                      '((id . "demo-s") (status . "closed") (labels "wave-3")
+                        (closed_at . "2026-10-16T11:00:00Z")))
+                extra-beads)))
+    (waves-dashboard--model
+     beads
+     '((wave.1.dispatched . "2026-10-16T10:00:00Z")
+       (wave.2.dispatched . "2026-10-16T11:00:00Z")
+       (wave.3.dispatched . "2026-10-16T10:30:00Z")
+       (wave.3.deployed . "2026-10-16T11:30:00Z abc1234"))
+     nil nil (waves-dashboard--time "2026-10-16T12:00:00Z"))))
+
+(ert-deftest waves-dashboard-requeued-marks-later-waves-only ()
+  (let* ((waves (wdt--requeue-model))
+         (w1 (wdt--wave "1" waves))
+         (w2 (wdt--wave "2" waves)))
+    (should (equal (waves-dashboard-wave-requeued w1) '(("demo-a" . "2"))))
+    ;; Wave 1 is earlier than wave 2, so nothing in wave 2 is re-queued.
+    (should-not (waves-dashboard-wave-requeued w2))
+    (should (waves-dashboard--all-requeued-p w1))
+    (should (string-suffix-p " · re-queued" (waves-dashboard--header-title w1)))
+    (should-not (string-match-p "re-queued" (waves-dashboard--header-title w2)))
+    (should (member "1" (waves-dashboard--default-collapsed waves)))
+    (should-not (member "2" (waves-dashboard--default-collapsed waves)))))
+
+(ert-deftest waves-dashboard-requeued-needs-all-moved ()
+  ;; One open bead that stays in wave 1: dimming yes, collapse no.
+  (let* ((waves (wdt--requeue-model
+                 '((id . "demo-c") (status . "open") (labels "wave-1"))))
+         (w1 (wdt--wave "1" waves)))
+    (should (assoc "demo-a" (waves-dashboard-wave-requeued w1)))
+    (should-not (waves-dashboard--all-requeued-p w1))
+    (should-not (member "1" (waves-dashboard--default-collapsed waves)))))
+
+(ert-deftest waves-dashboard-requeued-ignores-shipped-waves ()
+  ;; demo-d is open in wave 1 and in wave 3, which is later but shipped:
+  ;; not re-queued.
+  (let* ((waves (wdt--requeue-model
+                 '((id . "demo-d") (status . "open") (labels "wave-1" "wave-3"))))
+         (w1 (wdt--wave "1" waves)))
+    (should-not (assoc "demo-d" (waves-dashboard-wave-requeued w1)))))
+
+(ert-deftest waves-dashboard-requeued-row-is-dim ()
+  (with-temp-buffer
+    (vui--render-vnode
+     (waves-dashboard--issue-row
+      '((id . "demo-a") (title . "Moved") (status . "open") (priority . 2)
+        (issue_type . "task"))
+      "  → wave-2" t))
+    (goto-char (point-min))
+    (search-forward "Moved")
+    (should (eq (get-text-property (match-beginning 0) 'face)
+                'waves-dashboard-requeued))
+    (goto-char (match-beginning 0))
+    (should (equal (beads-section-issue-id-at-point) "demo-a"))
+    (search-forward "→ wave-2")
+    (should (eq (get-text-property (match-beginning 0) 'face)
+                'waves-dashboard-requeued))))
+
 ;;; waves-dashboard-test.el ends here
