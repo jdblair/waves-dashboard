@@ -62,6 +62,12 @@
   "How far back `git log' looks for merge commits."
   :type 'string)
 
+(defcustom waves-dashboard-wrap t
+  "Non-nil wraps long lines to the window width.
+Each continuation lines up under the text it continues: an issue's
+title, a merge's subject, an event's text.  Nil truncates lines."
+  :type 'boolean)
+
 (defface waves-dashboard-totals
   '((t :inherit font-lock-function-name-face))
   "Face for the totals header toggled with \\`T'.")
@@ -507,15 +513,39 @@ takes over 20 s on a ~740-bead project where `bd list --all' takes 0.4."
               (format-time-string "%a %d %b %H:%M" time))
     "-"))
 
+(defun waves-dashboard--hang (s col)
+  "Return S with continuation lines aligned at column COL.
+Only has an effect when `waves-dashboard-wrap' is on."
+  (if waves-dashboard-wrap
+      (propertize s 'wrap-prefix `(space :align-to ,col))
+    s))
+
 (defun waves-dashboard--issue (alist)
   "Return a `beads-issue' for bead ALIST."
   (beads-from-json 'beads-issue alist))
 
+(defun waves-dashboard--title-column (alist)
+  "Return the column where beads puts bead ALIST's title in an issue line.
+Mirrors the format in `beads-section--issue-line-vnode'."
+  (let ((p (alist-get 'priority alist)))
+    (length (format "  %-14s %-4s %-10s %-14s "
+                    (or (alist-get 'id alist) "")
+                    (if p (format "P%d" p) "--")
+                    (or (alist-get 'issue_type alist) "")
+                    (or (alist-get 'status alist) "")))))
+
 (defun waves-dashboard--issue-row (alist &optional suffix)
-  "Return the beads issue line for bead ALIST, with optional SUFFIX text."
-  (let ((row (beads-section--issue-line-vnode (waves-dashboard--issue alist))))
+  "Return the beads issue line for bead ALIST, with optional SUFFIX text.
+When wrapping, continuation lines align under the title."
+  (let* ((hang (and waves-dashboard-wrap
+                    `(space :align-to ,(waves-dashboard--title-column alist))))
+         (row (beads-section--issue-line-vnode
+               (waves-dashboard--issue alist)
+               (and hang (list 'wrap-prefix hang)))))
     (if suffix
-        (vui-hstack :spacing 0 row (vui-text suffix :face 'waves-dashboard-detail))
+        (vui-hstack :spacing 0 row
+                    (apply #'vui-text suffix :face 'waves-dashboard-detail
+                           (and hang (list 'wrap-prefix hang))))
       row)))
 
 (defun waves-dashboard--state-icon (state)
@@ -584,7 +614,8 @@ COLLAPSED-P folds it; ON-TOGGLE is the header click callback."
     (apply
      #'vui-vstack
      (beads-dashboard--section-header
-      (waves-dashboard--header-title w)
+      ;; Continuations line up under "wave-", after the glyph and icon.
+      (waves-dashboard--hang (waves-dashboard--header-title w) 5)
       (waves-dashboard--state-icon (waves-dashboard-wave-state w))
       collapsed-p (length beads) on-toggle)
      (unless collapsed-p
@@ -607,10 +638,13 @@ COLLAPSED-P folds it; ON-TOGGLE is the header click callback."
           (cons (waves-dashboard--subheading (format "Merges (%d)" (length merges)))
                 (mapcar
                  (lambda (m)
-                   (vui-text (format "    %s  %s  %s"
-                                     (format-time-string "%H:%M" (plist-get m :time))
-                                     (plist-get m :sha)
-                                     (string-remove-prefix "Merge " (plist-get m :subject)))))
+                   (let ((head (format "    %s  %s  "
+                                       (format-time-string "%H:%M" (plist-get m :time))
+                                       (plist-get m :sha))))
+                     (vui-text (waves-dashboard--hang
+                                (concat head (string-remove-prefix
+                                              "Merge " (plist-get m :subject)))
+                                (length head)))))
                  merges)))
         (when opened
           (cons (waves-dashboard--subheading
@@ -624,12 +658,13 @@ COLLAPSED-P folds it; ON-TOGGLE is the header click callback."
 
 (defun waves-dashboard--event-vnode (e)
   "Return the time-spine line for event E."
-  (let* ((line (format "  %s  %-10s %-10s %-14s %s"
+  (let* ((head (format "  %s  %-10s %-10s %-14s "
                        (format-time-string "%H:%M" (plist-get e :time))
                        (concat "wave-" (plist-get e :wave))
                        (plist-get e :kind)
-                       (or (plist-get e :id) "")
-                       (or (plist-get e :text) "")))
+                       (or (plist-get e :id) "")))
+         (line (waves-dashboard--hang (concat head (or (plist-get e :text) ""))
+                                      (length head)))
          (issue (plist-get e :issue))
          (id (plist-get e :id)))
     (cond
@@ -702,13 +737,16 @@ BY-PRIORITY adds a row per category broken down by priority."
 MODE is nil, `totals' or `priority'."
   (when mode
     (apply #'vui-vstack
-           (mapcar (lambda (l) (vui-text l :face 'waves-dashboard-totals))
+           (mapcar (lambda (l) (vui-text (waves-dashboard--hang l 10)
+                                         :face 'waves-dashboard-totals))
                    (waves-dashboard--totals-lines
                     (waves-dashboard--totals waves) (eq mode 'priority))))))
 
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
-  (vui-text "KEYS: TAB/S-TAB next/prev · SPC fold · t waves/timeline · T totals · g refresh · RET visit · q quit"
+  (vui-text (waves-dashboard--hang
+             "KEYS: TAB/S-TAB next/prev · SPC fold · t waves/timeline · T totals · g refresh · RET visit · q quit"
+             6)
             :face 'waves-dashboard-detail))
 
 (vui-defcomponent waves-dashboard--root-component (project-root)
@@ -795,7 +833,8 @@ MODE is nil, `totals' or `priority'."
 
 \\{waves-dashboard-mode-map}"
   :interactive nil
-  (setq-local truncate-lines t)
+  (setq-local truncate-lines (not waves-dashboard-wrap))
+  (setq-local word-wrap t)
   (setq-local revert-buffer-function
               (lambda (_ignore _noconfirm) (waves-dashboard-refresh))))
 

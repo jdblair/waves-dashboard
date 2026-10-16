@@ -179,4 +179,26 @@
       (should (= (length lines) 5)))
     (should (= (length (waves-dashboard--totals-lines totals nil)) 1))))
 
+(ert-deftest waves-dashboard-wrap-title-column ()
+  ;; The hanging indent must land exactly where beads puts the title,
+  ;; including when a field overflows its column width.
+  (dolist (b '(((id . "demo-a1") (title . "Short") (status . "open")
+                (priority . 2) (issue_type . "task"))
+               ((id . "demo-very-long-id.12") (title . "Overflowing id")
+                (status . "in_progress") (priority . 0)
+                (issue_type . "feature"))))
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--issue-row b))
+      (goto-char (point-min))
+      (search-forward (alist-get 'title b))
+      (let ((title-col (- (match-beginning 0) (line-beginning-position))))
+        (should (= title-col (waves-dashboard--title-column b)))
+        (should (equal (get-text-property (match-beginning 0) 'wrap-prefix)
+                       `(space :align-to ,title-col)))))))
+
+(ert-deftest waves-dashboard-wrap-off ()
+  (let ((waves-dashboard-wrap nil))
+    (should-not (get-text-property 0 'wrap-prefix
+                                   (waves-dashboard--hang "x" 4)))))
+
 ;;; waves-dashboard-test.el ends here

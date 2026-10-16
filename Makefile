@@ -1,8 +1,11 @@
 # Dependencies (beads.el, vui and theirs) are taken from an Emacs package
 # directory.  beads.el keeps its sources in lisp/, so that is added too.
+# An installed waves-dashboard package is left out, and this checkout comes
+# first: -L keeps its order, and the first directory with a match wins.
 EMACS ?= emacs
 ELPA  ?= $(HOME)/.emacs.d/elpa
-LOAD_PATH ?= $(foreach d,$(wildcard $(ELPA)/*/) $(wildcard $(ELPA)/beads/lisp/),-L $(d)) -L .
+DEPS  := $(filter-out $(ELPA)/waves-dashboard%,$(wildcard $(ELPA)/*/)) $(wildcard $(ELPA)/beads/lisp/)
+LOAD_PATH ?= -L . $(foreach d,$(DEPS),-L $(d))
 
 BATCH = $(EMACS) -Q --batch $(LOAD_PATH)
 
