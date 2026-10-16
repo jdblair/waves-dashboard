@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Record bead-waves facts in the current project's beads.
+
+Membership is a `wave-<name>` label on each bead; everything else lives in
+bd kv so that no bead's updated_at is bumped:
+
+  wave.<name>.title       free text
+  wave.<name>.dispatched  ISO-8601 UTC
+  wave.<name>.deployed    ISO-8601 UTC, a space, the trunk sha
+
+<name> is the label suffix: wave-12 -> 12, wave-k3x -> k3x.
+
+Usage:
+  wave plan <name> [--title T] <id>...       label beads, set title
+  wave dispatch <name> [--title T] [--at ISO] [<id>...]
+                                             label any not yet labelled,
+                                             record the dispatch time
+  wave deployed <name> [--sha SHA] [--at ISO]
+                                             record the deploy (sha defaults
+                                             to trunk, else HEAD)
+  wave show [<name>]                         print the recorded facts
+
+Writes stay in the Dolt working set (auto-commit is off by default); commit
+and push with `bd dolt commit` / `bd dolt push` as usual.
+"""
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
+
+
+def bd(*args, capture=True):
+    r = subprocess.run(["bd", *args], capture_output=capture, text=True)
+    if r.returncode != 0:
+        sys.exit(f"wave: bd {' '.join(args)} failed:\n{r.stderr or r.stdout}")
+    return r.stdout
+
+
+def kv_all():
+    return json.loads(bd("kv", "list", "--json") or "{}")
+
+
+def iso_utc(s=None):
+    """Normalise a timestamp (default: now) to ISO-8601 UTC, second precision."""
+    if s is None:
+        t = datetime.now(timezone.utc)
+    else:
+        t = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        if t.tzinfo is None:
+            sys.exit(f"wave: --at needs a zone offset: {s}")
+    return t.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def label_beads(name, ids):
+    """Add wave-<name> to beads that lack it; skip the rest so their
+    updated_at is not bumped again."""
+    label = f"wave-{name}"
+    todo = []
+    for i in ids:
+        issue = json.loads(bd("show", i, "--json"))
+        issue = issue[0] if isinstance(issue, list) else issue
+        if label not in (issue.get("labels") or []):
+            todo.append(i)
+    if todo:
+        bd("label", "add", *todo, label)
+    return todo
+
+
+def git_sha():
+    for ref in ("trunk", "HEAD"):
+        r = subprocess.run(["git", "rev-parse", "--short", ref],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    sys.exit("wave: no git trunk or HEAD here; pass --sha")
+
+
+def check_name(name):
+    if name.startswith("wave-"):
+        name = name[5:]
+    if not NAME_RE.match(name):
+        sys.exit(f"wave: bad wave name: {name!r}")
+    return name
+
+
+def cmd_plan(a):
+    added = label_beads(a.name, a.ids)
+    if a.title:
+        bd("kv", "set", f"wave.{a.name}.title", a.title)
+    print(f"wave {a.name}: labelled {len(added)} of {len(a.ids)}")
+
+
+def cmd_dispatch(a):
+    added = label_beads(a.name, a.ids) if a.ids else []
+    if a.title:
+        bd("kv", "set", f"wave.{a.name}.title", a.title)
+    at = iso_utc(a.at)
+    bd("kv", "set", f"wave.{a.name}.dispatched", at)
+    print(f"wave {a.name}: dispatched {at}; labelled {len(added)} of {len(a.ids)}")
+
+
+def cmd_deployed(a):
+    at = iso_utc(a.at)
+    sha = a.sha or git_sha()
+    bd("kv", "set", f"wave.{a.name}.deployed", f"{at} {sha}")
+    print(f"wave {a.name}: deployed {at} at {sha}")
+
+
+def cmd_show(a):
+    kv = kv_all()
+    rows = {}
+    for k, v in kv.items():
+        m = re.match(r"^wave\.(.+)\.(title|dispatched|deployed)$", k)
+        if m and (a.name is None or m.group(1) == a.name):
+            rows.setdefault(m.group(1), {})[m.group(2)] = v
+    for name in sorted(rows, key=lambda n: (not n.isdigit(), int(n) if n.isdigit() else 0, n)):
+        r = rows[name]
+        print(f"wave-{name}\t{r.get('dispatched', '-')}\t{r.get('deployed', '-')}\t{r.get('title', '')}")
+
+
+def main():
+    p = argparse.ArgumentParser(prog="wave", description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("plan")
+    s.add_argument("name", type=check_name)
+    s.add_argument("--title")
+    s.add_argument("ids", nargs="+")
+    s.set_defaults(fn=cmd_plan)
+
+    s = sub.add_parser("dispatch")
+    s.add_argument("name", type=check_name)
+    s.add_argument("--title")
+    s.add_argument("--at")
+    s.add_argument("ids", nargs="*")
+    s.set_defaults(fn=cmd_dispatch)
+
+    s = sub.add_parser("deployed")
+    s.add_argument("name", type=check_name)
+    s.add_argument("--sha")
+    s.add_argument("--at")
+    s.set_defaults(fn=cmd_deployed)
+
+    s = sub.add_parser("show")
+    s.add_argument("name", nargs="?", type=check_name)
+    s.set_defaults(fn=cmd_show)
+
+    a = p.parse_args()
+    a.fn(a)
+
+
+if __name__ == "__main__":
+    main()

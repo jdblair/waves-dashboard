@@ -1,0 +1,47 @@
+[
+ {
+  "id": "demo-b7ks",
+  "title": "Nightly link-check CI job silently skipped 7 of 9 nights; notifications off",
+  "status": "open",
+  "priority": 1,
+  "issue_type": "bug",
+  "created_at": "2026-10-16T08:53:35Z"
+ },
+ {
+  "id": "demo-n8fq",
+  "title": "Search: add an 'author' filter",
+  "status": "open",
+  "priority": 2,
+  "issue_type": "feature",
+  "created_at": "2026-10-16T08:53:42Z"
+ },
+ {
+  "id": "demo-w4nv",
+  "title": "Feed generator emits a duplicate entry for each extra category a post has",
+  "status": "closed",
+  "priority": 2,
+  "issue_type": "bug",
+  "labels": [
+   "wave-7"
+  ],
+  "created_at": "2026-10-16T08:10:08Z",
+  "closed_at": "2026-10-16T08:53:33Z",
+  "close_reason": "Deployed 2026-10-16 (trunk 5a0f2b8; config schema 5 applied)"
+ },
+ {
+  "id": "demo-f2vt",
+  "title": "Dev server TLS certificate: add a localhost SAN",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "created_at": "2026-10-16T08:59:39Z"
+ },
+ {
+  "id": "demo-e1rq",
+  "title": "Add a build timeout so a hung plugin cannot block CI forever",
+  "status": "open",
+  "priority": 3,
+  "issue_type": "task",
+  "created_at": "2026-10-16T08:47:27Z"
+ }
+]

@@ -1,0 +1,182 @@
+;;; waves-dashboard-test.el --- tests for waves-dashboard -*- lexical-binding: t; -*-
+
+;; Run from the repo root: make test
+;; or: emacs -Q --batch -L ~/.emacs.d/elpa/beads/lisp -L <vui dir> \
+;;       -L . -l test/waves-dashboard-test.el -f ert-run-tests-batch-and-exit
+;; Fixtures are synthetic: an invented static-site generator project
+;; ("demo-" ids) with waves 6-11 and hotfix, shaped like real bd and git
+;; output on 2026-10-16.
+
+;;; Code:
+
+(require 'ert)
+(require 'waves-dashboard)
+
+(defconst wdt--dir
+  (expand-file-name "fixtures/" (file-name-directory
+                                 (or load-file-name buffer-file-name))))
+
+(defun wdt--read (file)
+  (with-temp-buffer
+    (insert-file-contents (expand-file-name file wdt--dir))
+    (buffer-string)))
+
+(defun wdt--model (&optional kv)
+  (waves-dashboard--model
+   (waves-dashboard--json (wdt--read "demo-waves.json"))
+   kv
+   (waves-dashboard--parse-merges (wdt--read "demo-merges.txt"))
+   (waves-dashboard--json (wdt--read "demo-created.json"))
+   (waves-dashboard--time "2026-10-16T09:30:00Z")))
+
+(defun wdt--wave (name waves)
+  (cl-find name waves :key #'waves-dashboard-wave-name :test #'equal))
+
+(ert-deftest waves-dashboard-beads-api-present ()
+  (should (null (waves-dashboard--check-beads-api))))
+
+(ert-deftest waves-dashboard-fallback-deploy-from-close-reasons ()
+  (let* ((waves (wdt--model))
+         (w6 (wdt--wave "6" waves))
+         (w7 (wdt--wave "7" waves)))
+    (should (eq (waves-dashboard-wave-state w6) 'shipped))
+    (should (waves-dashboard-wave-deployed-approx w6))
+    (should (equal (waves-dashboard-wave-sha w6) "3c9e1d7"))
+    (should (equal (waves-dashboard-wave-sha w7) "5a0f2b8"))
+    ;; Latest "Deployed" close of wave 6 was 08:18:55Z; demo-k8dp closed
+    ;; later (08:40Z) as a duplicate, which must not count.
+    (should (= (waves-dashboard-wave-deployed w6)
+               (waves-dashboard--time "2026-10-16T08:18:55Z")))))
+
+(ert-deftest waves-dashboard-kv-beats-fallback ()
+  (let* ((waves (wdt--model '((wave.6.deployed . "2026-10-16T08:16:41Z 3c9e1d7")
+                              (wave.6.title . "Sidecars and safety")
+                              (wave.8.dispatched . "2026-10-16T09:05:00Z"))))
+         (w6 (wdt--wave "6" waves))
+         (w8 (wdt--wave "8" waves)))
+    (should-not (waves-dashboard-wave-deployed-approx w6))
+    (should (= (waves-dashboard-wave-deployed w6)
+               (waves-dashboard--time "2026-10-16T08:16:41Z")))
+    (should (equal (waves-dashboard-wave-title w6) "Sidecars and safety"))
+    (should (eq (waves-dashboard-wave-state w8) 'in-flight))))
+
+(ert-deftest waves-dashboard-merges-attach-to-waves ()
+  (let* ((waves (wdt--model))
+         (w6 (wdt--wave "6" waves))
+         (subjects (mapcar (lambda (m) (plist-get m :subject))
+                           (waves-dashboard-wave-merges w6))))
+    (should (member "Merge demo-r8tq" subjects))
+    ;; Not a bead id before the colon: stays out of every wave.
+    (should-not (cl-some (lambda (s) (string-prefix-p "Merge cssfix" s)) subjects))))
+
+(ert-deftest waves-dashboard-queued-waves-last ()
+  (let* ((waves (wdt--model))
+         (states (mapcar #'waves-dashboard-wave-state waves))
+         (first-queued (cl-position 'queued states)))
+    (should first-queued)
+    (should (cl-every (lambda (s) (eq s 'queued)) (nthcdr first-queued states)))
+    ;; hotfix merged after wave 7 deployed, so it is the newest.
+    (should (equal (waves-dashboard-wave-name (car waves)) "hotfix"))))
+
+(ert-deftest waves-dashboard-opened-skips-other-waves-beads ()
+  ;; demo-w4nv was created 08:10Z, inside wave 6 (first merge 07:15Z,
+  ;; deploy ~08:18Z), but it carries wave-7: filed as wave 7's work, not
+  ;; found during wave 6.
+  (let* ((waves (wdt--model))
+         (w6 (wdt--wave "6" waves))
+         (opened (mapcar (lambda (b) (alist-get 'id b))
+                         (waves-dashboard-wave-opened w6))))
+    (should-not (member "demo-w4nv" opened))))
+
+(ert-deftest waves-dashboard-opened-during-wave ()
+  ;; Inside one window: an unlabelled bead is opened during it, a
+  ;; labelled one is not unless discovered from one of the wave's beads.
+  (let* ((member '((id . "x-1") (status . "open") (labels "wave-1")))
+         (found '((id . "x-2") (created_at . "2026-10-16T10:30:00Z")))
+         (planned '((id . "x-3") (created_at . "2026-10-16T10:30:00Z")
+                    (labels "wave-2")))
+         (linked '((id . "x-4") (created_at . "2026-10-16T10:30:00Z")
+                   (labels "wave-2")
+                   (dependencies ((type . "discovered-from")
+                                  (depends_on_id . "x-1")))))
+         (waves (waves-dashboard--model
+                 (list member planned linked)
+                 '((wave.1.dispatched . "2026-10-16T10:00:00Z"))
+                 nil
+                 (list member found planned linked)
+                 (waves-dashboard--time "2026-10-16T11:00:00Z")))
+         (opened (mapcar (lambda (b) (alist-get 'id b))
+                         (waves-dashboard-wave-opened (wdt--wave "1" waves)))))
+    (should (equal opened '("x-2" "x-4")))))
+
+(ert-deftest waves-dashboard-subject-ids ()
+  (let ((known (make-hash-table :test 'equal)))
+    (puthash "demo-mt4q" t known)
+    (puthash "demo-5ffz" t known)
+    (should (equal (waves-dashboard--subject-ids
+                    "Merge demo-mt4q, demo-5ffz: link-check tests" known)
+                   '("demo-mt4q" "demo-5ffz")))
+    ;; A merge that only mentions a bead, or names one after the colon.
+    (should-not (waves-dashboard--subject-ids
+                 "Make a new save cancel the running rebuild (demo-mt4q item 2)" known))
+    (should-not (waves-dashboard--subject-ids
+                 "Merge cssfix: demo-mt4q message lint fix" known))))
+
+(ert-deftest waves-dashboard-events-sorted ()
+  (let* ((events (waves-dashboard--events (wdt--model)))
+         (times (mapcar (lambda (e) (plist-get e :time)) events)))
+    (should events)
+    (should (equal times (sort (copy-sequence times) #'<)))))
+
+(ert-deftest waves-dashboard-totals ()
+  ;; Expected values are counted independently from the model.
+  (let* ((waves (wdt--model))
+         (totals (waves-dashboard--totals waves))
+         (queued-beads (cl-loop for w in waves
+                                when (eq (waves-dashboard-wave-state w) 'queued)
+                                append (waves-dashboard-wave-beads w)))
+         (closed-ids (delete-dups
+                      (cl-loop for w in waves
+                               append (cl-loop for b in (waves-dashboard-wave-beads w)
+                                               when (equal (alist-get 'status b) "closed")
+                                               collect (alist-get 'id b))))))
+    (should (= (alist-get 'all (plist-get totals :waves)) (length waves)))
+    (should (> (length queued-beads) 0))
+    (should (= (alist-get 'all (plist-get totals :queued)) (length queued-beads)))
+    (should (= (alist-get 'all (plist-get totals :closed)) (length closed-ids)))
+    ;; Priority buckets add up to the total.
+    (dolist (c '(:queued :new :closed))
+      (let ((al (plist-get totals c)))
+        (should (= (alist-get 'all al)
+                   (apply #'+ (mapcar #'cdr (cl-remove 'all al :key #'car)))))))
+    (should (= (plist-get totals :merges)
+               (length (delete-dups
+                        (cl-loop for w in waves
+                                 append (mapcar (lambda (m) (plist-get m :sha))
+                                                (waves-dashboard-wave-merges w)))))))))
+
+(ert-deftest waves-dashboard-totals-dedupes-and-splits ()
+  ;; A bead in two waves counts once per category; one opened in one wave
+  ;; and closed in another counts as new and as closed.
+  (let* ((b1 '((id . "x-1") (status . "closed") (priority . 1)))
+         (b2 '((id . "x-2") (status . "open") (priority . 2)))
+         (w1 (waves-dashboard-wave--make :name "1" :state 'shipped
+                                         :beads (list b1)
+                                         :merges '((:sha "aaa") (:sha "bbb"))))
+         (w2 (waves-dashboard-wave--make :name "2" :state 'queued
+                                         :beads (list b1 b2)
+                                         :opened (list b1)
+                                         :merges '((:sha "aaa"))))
+         (totals (waves-dashboard--totals (list w1 w2))))
+    (should (equal (alist-get 'all (plist-get totals :closed)) 1))
+    (should (equal (alist-get 'all (plist-get totals :new)) 1))
+    (should (equal (alist-get 'all (plist-get totals :queued)) 2))
+    (should (equal (alist-get 1 (plist-get totals :queued)) 1))
+    (should (equal (plist-get totals :merges) 2))
+    (let ((lines (waves-dashboard--totals-lines totals t)))
+      (should (string-match-p "2 waves (1 shipped, 1 queued)" (car lines)))
+      (should (string-match-p "P1  *P2" (nth 1 lines)))
+      (should (= (length lines) 5)))
+    (should (= (length (waves-dashboard--totals-lines totals nil)) 1))))
+
+;;; waves-dashboard-test.el ends here
