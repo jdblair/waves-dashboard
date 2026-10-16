@@ -27,7 +27,7 @@
 ;; Data, all read-only:
 ;;   - membership: `wave-<name>' bead labels;
 ;;   - wave facts: bd kv keys wave.<name>.title / .dispatched / .deployed,
-;;     written by the `wave' script (bin/wave in this repo);
+;;     and wave.<name>.model.<bead id>, written by the `wave' script (bin/wave in this repo);
 ;;   - merges: `git log --first-parent --merges' subjects naming bead ids;
 ;;   - fallback deploy for waves with no kv record: "Deployed ... (trunk SHA"
 ;;     close reasons, timed by the latest close (shown with ~).
@@ -116,7 +116,7 @@ up when this file loads rather than as a broken buffer."
                (:copier nil))
   "One wave: its recorded facts and what the data says happened."
   name title dispatched deployed deployed-approx sha
-  beads merges opened state start end requeued)
+  beads merges opened state start end requeued models)
 
 (defun waves-dashboard--time (s)
   "Return ISO-8601 string S as a float time, or nil."
@@ -290,11 +290,15 @@ Running and shipped waves come newest first, queued ones after."
           (push name (gethash (alist-get 'id is) wave-of))))
       (dolist (pair kv)
         (let ((k (format "%s" (car pair))))
-          (when (string-match
-                 "\\`wave\\.\\(.+\\)\\.\\(title\\|dispatched\\|deployed\\)\\'" k)
+          (cond
+           ((string-match
+             "\\`wave\\.\\(.+\\)\\.\\(title\\|dispatched\\|deployed\\)\\'" k)
             (waves-dashboard--apply-kv (wave (match-string 1 k))
                                        (match-string 2 k)
-                                       (format "%s" (cdr pair))))))
+                                       (format "%s" (cdr pair))))
+           ((string-match "\\`wave\\.\\(.+?\\)\\.model\\.\\(.+\\)\\'" k)
+            (push (cons (match-string 2 k) (format "%s" (cdr pair)))
+                  (waves-dashboard-wave-models (wave (match-string 1 k))))))))
       (dolist (m merges)
         (let* ((ids (waves-dashboard--subject-ids (plist-get m :subject)
                                                   wave-of))
@@ -748,12 +752,17 @@ beads."
          'waves-dashboard-detail
          (funcall fold "beads" beads-closed)
          (if beads
-             (let ((marks (waves-dashboard-wave-requeued w)))
+             (let ((marks (waves-dashboard-wave-requeued w))
+                   (models (waves-dashboard-wave-models w)))
                (mapcar (lambda (b)
-                         (if-let* ((to (cdr (assoc (alist-get 'id b) marks))))
-                             (waves-dashboard--issue-row
-                              b (format "  → wave-%s" to) t)
-                           (waves-dashboard--issue-row b)))
+                         (let* ((id (alist-get 'id b))
+                                (to (cdr (assoc id marks)))
+                                (model (cdr (assoc id models)))
+                                (suffix (concat
+                                         (and model (format "  [%s]" model))
+                                         (and to (format "  → wave-%s" to)))))
+                           (waves-dashboard--issue-row
+                            b (and (not (string-empty-p suffix)) suffix) to)))
                        beads))
            (list (beads-dashboard--empty-line "No labelled beads."))))
         (when merges

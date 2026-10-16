@@ -315,3 +315,18 @@ EXTRA-BEADS are added as they are."
       (kill-buffer buf))))
 
 ;;; waves-dashboard-test.el ends here
+
+(ert-deftest waves-dashboard-model-kv-and-row ()
+  (let* ((waves (wdt--model '(("wave.6.model.demo-r8tq" . "sonnet")
+                              ("wave.6.title" . "T"))))
+         (w1 (wdt--wave "6" waves)))
+    (should (equal (cdr (assoc "demo-r8tq" (waves-dashboard-wave-models w1)))
+                   "sonnet"))
+    (should (equal (waves-dashboard-wave-title w1) "T"))
+    (should-not (assoc "model.demo-a" (waves-dashboard-wave-models w1)))
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          w1 nil #'ignore
+                          (lambda (_ d) (cons nil #'ignore))))
+      (goto-char (point-min))
+      (should (search-forward "[sonnet]" nil t)))))

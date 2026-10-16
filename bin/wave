@@ -8,6 +8,7 @@ bd kv so that no bead's updated_at is bumped:
   wave.<name>.title       free text
   wave.<name>.dispatched  ISO-8601 UTC
   wave.<name>.deployed    ISO-8601 UTC, a space, the trunk sha
+  wave.<name>.model.<id>  model the agent for bead <id> ran on
 
 <name> is the label suffix: wave-12 -> 12, wave-k3x -> k3x.
 
@@ -19,6 +20,7 @@ Usage:
   wave deployed <name> [--sha SHA] [--at ISO]
                                              record the deploy (sha defaults
                                              to trunk, else HEAD)
+  wave model <name> <id> <model>             record the model a bead's agent used
   wave show [<name>]                         print the recorded facts
 
 Writes stay in the Dolt working set (auto-commit is off by default); commit
@@ -112,6 +114,11 @@ def cmd_deployed(a):
     print(f"wave {a.name}: deployed {at} at {sha}")
 
 
+def cmd_model(a):
+    bd("kv", "set", f"wave.{a.name}.model.{a.id}", a.model)
+    print(f"wave {a.name}: {a.id} on {a.model}")
+
+
 def cmd_show(a):
     kv = kv_all()
     rows = {}
@@ -146,6 +153,12 @@ def main():
     s.add_argument("--sha")
     s.add_argument("--at")
     s.set_defaults(fn=cmd_deployed)
+
+    s = sub.add_parser("model")
+    s.add_argument("name", type=check_name)
+    s.add_argument("id")
+    s.add_argument("model")
+    s.set_defaults(fn=cmd_model)
 
     s = sub.add_parser("show")
     s.add_argument("name", nargs="?", type=check_name)
