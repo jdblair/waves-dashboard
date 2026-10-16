@@ -29,15 +29,57 @@ Design rationale and the bd behaviour found while building it are in
 
 ## Install
 
-**waves-dashboard** — straight from GitHub with `use-package` (Emacs 30+):
+### Emacs: waves-dashboard as a VC package from GitHub
+
+`use-package`'s `:vc` keyword (built into Emacs 30) clones the repository
+into `package-user-dir`, byte-compiles it and generates its autoloads. That
+is the whole install, and the clone itself isn't needed. A complete init
+file setup, including the dependencies:
 
 ```elisp
+(require 'package)
+(add-to-list 'package-archives '("melpa" . "https://melpa.org/packages/"))
+(package-initialize)
+
+;; vui comes from MELPA
+(use-package vui :ensure t)
+
+;; beads.el is not on MELPA, so install it from GitHub; its sources are in lisp/
+(use-package beads
+  :vc (:url "https://github.com/r0man/beads.el" :lisp-dir "lisp" :rev :newest))
+
 (use-package waves-dashboard
   :vc (:url "https://github.com/jdblair/waves-dashboard" :rev :newest)
   :after beads)
 ```
 
-Pick up later commits with `M-x package-vc-upgrade`.
+Leave out the `vui` and `beads` blocks if you already install those another
+way. `:rev :newest` tracks the tip of the default branch (`trunk`). Without
+it, package-vc installs the latest release: the last commit that changed the
+`Version:` header.
+
+The first start after adding this clones and builds, and later starts just
+load the package. package.el also records it in `package-selected-packages`
+and `package-vc-selected-packages` in your `custom-set-variables`, which is
+normal for any VC package.
+
+- **Use:** `M-x waves-dashboard` in a beads project (see
+  [Reading the dashboard](#reading-the-dashboard)).
+- **Upgrade:** `M-x package-vc-upgrade RET waves-dashboard`, or
+  `M-x package-vc-upgrade-all`. A running Emacs keeps the old keymap after an
+  upgrade (`defvar-keymap` doesn't redefine an existing map), so restart
+  Emacs to pick up new key bindings.
+- **Check the install:** `M-x locate-library RET waves-dashboard` should
+  point into `~/.emacs.d/elpa/waves-dashboard/`.
+- **Uninstall:** `M-x package-delete RET waves-dashboard`, and remove the
+  `use-package` block.
+- **Emacs 29:** `use-package` has no `:vc` there. Run
+  `M-x package-vc-install RET https://github.com/jdblair/waves-dashboard`
+  once (and the same for beads.el, with its `lisp/` directory; see the
+  `package-vc-selected-packages` docstring for `:lisp-dir`). Then use a plain
+  `(use-package waves-dashboard :after beads)`.
+
+### wave and the bead-waves skill
 
 `wave` and the skill are not Emacs packages, so for those clone the
 repository somewhere, e.g. `~/src/waves-dashboard`:
