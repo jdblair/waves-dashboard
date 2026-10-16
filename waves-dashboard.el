@@ -680,16 +680,50 @@ COLLAPSED and DEFAULTS are the current collapse state."
                                 name collapsed defaults)))
                (cl-remove name collapsed :key #'car :test #'equal)))))))
 
-(defun waves-dashboard--subheading (text)
-  "Return an indented subheading vnode reading TEXT."
-  (vui-text (concat "  " text) :face 'font-lock-comment-face))
+(defun waves-dashboard--fold (buffer key collapsed default)
+  "Return (FOLDED . TOGGLE) for the foldable part KEY in BUFFER.
+COLLAPSED is the alist of explicit toggles; DEFAULT is KEY's folded
+state until it is toggled.  TOGGLE flips it."
+  (let ((folded (if-let* ((cell (assoc key collapsed))) (cdr cell) default)))
+    (cons folded
+          (lambda ()
+            (when (buffer-live-p buffer)
+              (with-current-buffer buffer
+                (beads-dashboard--bump
+                 :collapsed
+                 (cons (cons key (not folded))
+                       (cl-remove key collapsed :key #'car :test #'equal)))))))))
 
-(defun waves-dashboard--wave-vnode (w collapsed-p on-toggle)
+(defun waves-dashboard--subsection (text face fold children)
+  "Return a foldable subsection headed by TEXT in FACE.
+FOLD is (FOLDED . TOGGLE) from `waves-dashboard--fold'.  CHILDREN, a
+list of vnodes, show when it is not folded."
+  (let ((head (beads-thing-propertize
+               (concat "  " (beads-dashboard--toggle-glyph (car fold)) " " text)
+               '(:kind section))))
+    (apply #'vui-vstack
+           (vui-button head
+             :no-decoration t
+             :face face
+             :help-echo nil
+             :on-click (cdr fold))
+           (unless (car fold) children))))
+
+(defun waves-dashboard--all-closed-p (beads)
+  "Non-nil when every bead in BEADS is closed."
+  (cl-every (lambda (b) (equal (alist-get 'status b) "closed")) beads))
+
+(defun waves-dashboard--wave-vnode (w collapsed-p on-toggle fold)
   "Return the section vnode for wave W.
-COLLAPSED-P folds it; ON-TOGGLE is the header click callback."
-  (let ((beads (waves-dashboard-wave-beads w))
-        (merges (waves-dashboard-wave-merges w))
-        (opened (waves-dashboard-wave-opened w)))
+COLLAPSED-P folds it; ON-TOGGLE is the header click callback.  FOLD
+is called with a subsection name and its default folded state, and
+returns that subsection's (FOLDED . TOGGLE).  Subsections start
+folded when everything in them is closed; merges follow the wave's
+beads."
+  (let* ((beads (waves-dashboard-wave-beads w))
+         (merges (waves-dashboard-wave-merges w))
+         (opened (waves-dashboard-wave-opened w))
+         (beads-closed (and beads (waves-dashboard--all-closed-p beads))))
     (apply
      #'vui-vstack
      (beads-dashboard--section-header
@@ -698,48 +732,56 @@ COLLAPSED-P folds it; ON-TOGGLE is the header click callback."
       (waves-dashboard--state-icon (waves-dashboard-wave-state w))
       collapsed-p (length beads) on-toggle)
      (unless collapsed-p
-       (append
-        (when (or (waves-dashboard-wave-dispatched w)
-                  (waves-dashboard-wave-start w))
-          (list (vui-text
-                 (if (waves-dashboard-wave-dispatched w)
-                     (format "  Dispatched %s"
-                             (waves-dashboard--fmt-time
-                              (waves-dashboard-wave-dispatched w)))
-                   (format "  First merge %s (no dispatch recorded)"
-                           (waves-dashboard--fmt-time
-                            (waves-dashboard-wave-start w))))
-                 :face 'waves-dashboard-detail)))
-        (if beads
-            (let ((marks (waves-dashboard-wave-requeued w)))
-              (mapcar (lambda (b)
-                        (if-let* ((to (cdr (assoc (alist-get 'id b) marks))))
-                            (waves-dashboard--issue-row
-                             b (format "  → wave-%s" to) t)
-                          (waves-dashboard--issue-row b)))
-                      beads))
-          (list (beads-dashboard--empty-line "No labelled beads.")))
+       (list
+        (waves-dashboard--subsection
+         (format "%s (%d)"
+                 (cond ((waves-dashboard-wave-dispatched w)
+                        (format "Dispatched %s"
+                                (waves-dashboard--fmt-time
+                                 (waves-dashboard-wave-dispatched w))))
+                       ((waves-dashboard-wave-start w)
+                        (format "First merge %s (no dispatch recorded)"
+                                (waves-dashboard--fmt-time
+                                 (waves-dashboard-wave-start w))))
+                       (t "Beads"))
+                 (length beads))
+         'waves-dashboard-detail
+         (funcall fold "beads" beads-closed)
+         (if beads
+             (let ((marks (waves-dashboard-wave-requeued w)))
+               (mapcar (lambda (b)
+                         (if-let* ((to (cdr (assoc (alist-get 'id b) marks))))
+                             (waves-dashboard--issue-row
+                              b (format "  → wave-%s" to) t)
+                           (waves-dashboard--issue-row b)))
+                       beads))
+           (list (beads-dashboard--empty-line "No labelled beads."))))
         (when merges
-          (cons (waves-dashboard--subheading (format "Merges (%d)" (length merges)))
-                (mapcar
-                 (lambda (m)
-                   (let ((head (format "    %s  %s  "
-                                       (format-time-string "%H:%M" (plist-get m :time))
-                                       (plist-get m :sha))))
-                     (vui-text (waves-dashboard--hang
-                                (concat head (string-remove-prefix
-                                              "Merge " (plist-get m :subject)))
-                                (length head)))))
-                 merges)))
+          (waves-dashboard--subsection
+           (format "Merges (%d)" (length merges))
+           'font-lock-comment-face
+           (funcall fold "merges" beads-closed)
+           (mapcar
+            (lambda (m)
+              (let ((head (format "    %s  %s  "
+                                  (format-time-string "%H:%M" (plist-get m :time))
+                                  (plist-get m :sha))))
+                (vui-text (waves-dashboard--hang
+                           (concat head (string-remove-prefix
+                                         "Merge " (plist-get m :subject)))
+                           (length head)))))
+            merges)))
         (when opened
-          (cons (waves-dashboard--subheading
-                 (format "Opened during the wave (%d)" (length opened)))
-                (mapcar
-                 (lambda (b)
-                   (let ((src (car (waves-dashboard--discovered-from b))))
-                     (waves-dashboard--issue-row
-                      b (and src (format "  ← %s" src)))))
-                 opened))))))))
+          (waves-dashboard--subsection
+           (format "Opened during the wave (%d)" (length opened))
+           'font-lock-comment-face
+           (funcall fold "opened" (waves-dashboard--all-closed-p opened))
+           (mapcar
+            (lambda (b)
+              (let ((src (car (waves-dashboard--discovered-from b))))
+                (waves-dashboard--issue-row
+                 b (and src (format "  ← %s" src)))))
+            opened))))))))
 
 (defun waves-dashboard--event-vnode (e)
   "Return the time-spine line for event E."
@@ -877,7 +919,10 @@ MODE is nil, `totals' or `priority'."
                      (waves-dashboard--wave-vnode
                       w
                       (waves-dashboard--collapsed-p name collapsed defaults)
-                      (waves-dashboard--toggler buffer name collapsed defaults))))
+                      (waves-dashboard--toggler buffer name collapsed defaults)
+                      (lambda (sub default)
+                        (waves-dashboard--fold
+                         buffer (concat name "/" sub) collapsed default)))))
                  waves)))))
      (waves-dashboard--footer))))
 

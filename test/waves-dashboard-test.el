@@ -267,4 +267,51 @@ EXTRA-BEADS are added as they are."
     (should (eq (get-text-property (match-beginning 0) 'face)
                 'waves-dashboard-requeued))))
 
+(defun wdt--fold-defaults (w)
+  "Render wave W's sections and return the (SUB . DEFAULT) pairs it asked for."
+  (let (calls)
+    (waves-dashboard--wave-vnode
+     w nil #'ignore
+     (lambda (sub default) (push (cons sub default) calls) (cons default #'ignore)))
+    (nreverse calls)))
+
+(ert-deftest waves-dashboard-subsections-fold-when-all-closed ()
+  (let* ((closed '((id . "demo-b") (status . "closed")))
+         (open '((id . "demo-a") (status . "open")))
+         (done (waves-dashboard-wave--make
+                :name "1" :state 'done :beads (list closed)
+                :merges '((:sha "aaa" :time 1.0 :subject "Merge demo-b"))
+                :opened (list open)))
+         (busy (waves-dashboard-wave--make
+                :name "2" :state 'in-flight :beads (list open closed)
+                :merges '((:sha "bbb" :time 1.0 :subject "Merge demo-a"))
+                :opened (list closed))))
+    ;; Wave's beads all closed: beads and merges fold; an open bead opened
+    ;; during it keeps that list open.
+    (should (equal (wdt--fold-defaults done)
+                   '(("beads" . t) ("merges" . t) ("opened" . nil))))
+    (should (equal (wdt--fold-defaults busy)
+                   '(("beads" . nil) ("merges" . nil) ("opened" . t))))))
+
+(ert-deftest waves-dashboard-subsection-folds-and-toggles ()
+  (let ((buf (generate-new-buffer " *wdt-fold*")))
+    (unwind-protect
+        (progn
+          ;; A toggle in COLLAPSED beats the default.
+          (should (car (waves-dashboard--fold buf "1/beads" nil t)))
+          (should-not (car (waves-dashboard--fold buf "1/beads" '(("1/beads")) t)))
+          (should (car (waves-dashboard--fold buf "1/beads" '(("1/beads" . t)) nil)))
+          ;; Folded hides the children, unfolded shows them.
+          (dolist (folded '(t nil))
+            (with-temp-buffer
+              (vui--render-vnode
+               (waves-dashboard--subsection "Merges (1)" 'default
+                                            (cons folded #'ignore)
+                                            (list (vui-text "child line"))))
+              (should (equal (not folded)
+                             (and (string-match-p "child line" (buffer-string)) t)))
+              (should (string-match-p (if folded "▸\\|▶" "▾\\|▼")
+                                      (buffer-string))))))
+      (kill-buffer buf))))
+
 ;;; waves-dashboard-test.el ends here

@@ -89,8 +89,9 @@ text it continues (an issue's title, a merge's subject). Set
   [Reading the dashboard](#reading-the-dashboard)).
 - **Upgrade:** `M-x package-vc-upgrade RET waves-dashboard`, or
   `M-x package-vc-upgrade-all`. A running Emacs keeps the old keymap after an
-  upgrade (`defvar-keymap` doesn't redefine an existing map), so restart
-  Emacs to pick up new key bindings.
+  upgrade (`defvar-keymap` doesn't redefine an existing map), and an open
+  dashboard keeps running the code it was opened with, so restart Emacs
+  after upgrading.
 - **Check the install:** `M-x locate-library RET waves-dashboard` should
   point into `~/.emacs.d/elpa/waves-dashboard/`.
 - **Uninstall:** `M-x package-delete RET waves-dashboard`, and remove the
@@ -171,7 +172,12 @@ collapsed and its header ends in `· re-queued`. Its state doesn't change. To
 let an old wave finish properly, remove the old label from the beads that
 moved on.
 
-Under the header, a wave's first line says when it started:
+Inside an open wave there are three foldable parts (`RET`, `SPC` or a click
+on the heading): the wave's own beads under its "Dispatched" or "First
+merge" line, "Merges", and "Opened during the wave". Each starts folded when
+everything in it is closed. Merges follow the wave's beads.
+
+A wave's first line says when it started:
 
 - **Dispatched <time>**: the `wave.<name>.dispatched` kv record that
   `wave dispatch` writes.
