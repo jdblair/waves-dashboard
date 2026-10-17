@@ -330,3 +330,34 @@ EXTRA-BEADS are added as they are."
                           (lambda (_ d) (cons nil #'ignore))))
       (goto-char (point-min))
       (should (search-forward "[sonnet]" nil t)))))
+
+(ert-deftest waves-dashboard-state-icon-emoji-or-text ()
+  (let ((waves-dashboard--emoji t))
+    (should (equal (waves-dashboard--state-icon 'shipped) "🚀")))
+  (let ((waves-dashboard--emoji nil))
+    (should (equal (mapcar #'waves-dashboard--state-icon
+                           '(shipped done in-flight queued))
+                   '("[deployed]" "[closed]" "[in flight]" "[queued]")))))
+
+(ert-deftest waves-dashboard-auto-refresh-toggles-timer ()
+  (with-temp-buffer
+    (waves-dashboard-mode)
+    (let ((waves-dashboard-refresh-interval 3600))
+      (waves-dashboard-toggle-auto-refresh)
+      (should (timerp waves-dashboard--timer))
+      (waves-dashboard-toggle-auto-refresh)
+      (should-not waves-dashboard--timer))))
+
+(ert-deftest waves-dashboard-tick-refreshes-only-shown-buffers ()
+  (let ((calls 0))
+    (cl-letf (((symbol-function 'waves-dashboard-refresh)
+               (lambda () (cl-incf calls))))
+      (with-temp-buffer
+        (waves-dashboard--tick (current-buffer))      ; not shown
+        (should (= calls 0))
+        (save-window-excursion
+          (switch-to-buffer (current-buffer))
+          (waves-dashboard--tick (current-buffer))
+          (should (= calls 1))))
+      (waves-dashboard--tick (get-buffer-create " gone"))
+      (kill-buffer " gone"))))

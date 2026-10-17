@@ -142,8 +142,11 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 
 `M-x waves-dashboard` opens the current project; with `C-u` it asks for one.
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
-the totals header (off, totals, totals by priority), `g` reloads (the buffer
-does not refresh on its own), `RET` visits the bead at point, `q` quits.
+the totals header (off, totals, totals by priority), `e` swaps the
+emoji state icons for text names (`[deployed]`, `[closed]`, `[in flight]`,
+`[queued]`), `g` reloads, `a` toggles auto-refresh (every
+`waves-dashboard-refresh-interval` seconds, 60 by default; only while the
+buffer is visible), `RET` visits the bead at point, `q` quits.
 
 Each wave's header shows its state:
 

@@ -68,6 +68,10 @@ Each continuation lines up under the text it continues: an issue's
 title, a merge's subject, an event's text.  Nil truncates lines."
   :type 'boolean)
 
+(defcustom waves-dashboard-refresh-interval 60
+  "Seconds between reloads while auto-refresh (\\`a') is on."
+  :type 'integer)
+
 (defface waves-dashboard-requeued
   '((t :inherit shadow))
   "Face for a bead that has moved on to a later wave.")
@@ -566,6 +570,13 @@ takes over 20 s on a ~740-bead project where `bd list --all' takes 0.4."
 (defvar-local waves-dashboard--last-data nil
   "Last loaded wave list, shown while a refresh is loading.")
 
+(defvar-local waves-dashboard--emoji t
+  "Non-nil shows emoji wave-state icons, nil short text names.
+Mirrors the root component's `emoji' state for the render functions.")
+
+(defvar-local waves-dashboard--timer nil
+  "Auto-refresh timer of this dashboard buffer, or nil when off.")
+
 (defun waves-dashboard--fmt-time (time &optional approx)
   "Format float TIME for display; prefix ~ when APPROX."
   (if time
@@ -629,9 +640,15 @@ wrapping, continuation lines align under the title."
       row)))
 
 (defun waves-dashboard--state-icon (state)
-  "Return the header icon for wave STATE."
-  (pcase state
-    ('shipped "🚀") ('done "✅") ('in-flight "🚧") (_ "📋")))
+  "Return the header icon for wave STATE.
+Text names such as [deployed] replace the emoji when
+`waves-dashboard--emoji' is nil."
+  (if waves-dashboard--emoji
+      (pcase state
+        ('shipped "🚀") ('done "✅") ('in-flight "🚧") (_ "📋"))
+    (pcase state
+      ('shipped "[deployed]") ('done "[closed]")
+      ('in-flight "[in flight]") (_ "[queued]"))))
 
 (defun waves-dashboard--header-title (w)
   "Return the section header text for wave W."
@@ -881,15 +898,17 @@ MODE is nil, `totals' or `priority'."
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
   (vui-text (waves-dashboard--hang
-             "KEYS: TAB/S-TAB next/prev · SPC fold · t waves/timeline · T totals · g refresh · RET visit · q quit"
+             "KEYS: TAB/S-TAB next/prev · SPC fold · t waves/timeline · T totals · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
              6)
             :face 'waves-dashboard-detail))
 
 (vui-defcomponent waves-dashboard--root-component (project-root)
   "Root of the waves dashboard for PROJECT-ROOT."
-  :state ((generation 0) (view 'waves) (collapsed nil) (totals nil))
+  :state ((generation 0) (view 'waves) (collapsed nil) (totals nil)
+           (emoji t))
   :render
   (let* ((buffer (current-buffer))
+         (_ (setq waves-dashboard--emoji emoji))
          (async (vui-use-async (list 'waves project-root generation)
                   (lambda (resolve reject)
                     (waves-dashboard--collect project-root resolve reject))))
@@ -903,7 +922,8 @@ MODE is nil, `totals' or `priority'."
                    (vui-text (file-name-nondirectory
                               (directory-file-name project-root))
                              :face 'font-lock-constant-face)
-                   (vui-text (if (eq view 'spine) " · timeline" " · waves")
+                   (vui-text (concat (if (eq view 'spine) " · timeline" " · waves")
+                                     (if waves-dashboard--timer " · auto" ""))
                              :face 'shadow))))
     (vui-vstack
      :spacing 1
@@ -960,11 +980,52 @@ MODE is nil, `totals' or `priority'."
    (pcase (plist-get (vui-instance-state vui--root-instance) :totals)
      ('nil 'totals) ('totals 'priority) (_ nil))))
 
+(defun waves-dashboard-toggle-emoji ()
+  "Toggle the wave-state icons between emoji and short text names."
+  (interactive)
+  (beads-dashboard--bump
+   :emoji
+   (not (plist-get (vui-instance-state vui--root-instance) :emoji))))
+
+(defun waves-dashboard--tick (buffer)
+  "Reload BUFFER if it is live and shown; stop the timer when it is gone."
+  (cond
+   ((not (buffer-live-p buffer)))
+   ((get-buffer-window buffer t)
+    (with-current-buffer buffer (waves-dashboard-refresh)))))
+
+(defun waves-dashboard--stop-timer ()
+  "Cancel this buffer's auto-refresh timer."
+  (when (timerp waves-dashboard--timer)
+    (cancel-timer waves-dashboard--timer))
+  (setq waves-dashboard--timer nil))
+
+(defun waves-dashboard-toggle-auto-refresh ()
+  "Toggle reloading every `waves-dashboard-refresh-interval' seconds.
+Only a visible buffer is reloaded; the timer dies with the buffer."
+  (interactive)
+  (if waves-dashboard--timer
+      (waves-dashboard--stop-timer)
+    (let ((buffer (current-buffer))
+          (secs waves-dashboard-refresh-interval))
+      (setq waves-dashboard--timer
+            (run-with-timer secs secs #'waves-dashboard--tick buffer))
+      (add-hook 'kill-buffer-hook #'waves-dashboard--stop-timer nil t)))
+  (message "Waves auto-refresh %s"
+           (if waves-dashboard--timer
+               (format "on (every %ds)" waves-dashboard-refresh-interval)
+             "off"))
+  ;; Redraw the header's " · auto" marker; the data is unchanged.
+  (when vui--root-instance
+    (vui--rerender-instance vui--root-instance)))
+
 (defvar-keymap waves-dashboard-mode-map
   :parent beads-section-mode-map
   "g" #'waves-dashboard-refresh
   "t" #'waves-dashboard-toggle-view
   "T" #'waves-dashboard-cycle-totals
+  "e" #'waves-dashboard-toggle-emoji
+  "a" #'waves-dashboard-toggle-auto-refresh
   "q" #'quit-window)
 
 (define-derived-mode waves-dashboard-mode beads-section-mode "Waves"
