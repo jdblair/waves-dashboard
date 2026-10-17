@@ -145,9 +145,9 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 (right, below, left, then above; it splits when the window is alone).
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
 the totals header (off, totals, totals by priority), `C` collapses and `E` expands all waves (`E` leaves each wave's
-subsections at their defaults), and `1`/`2`/`3` set a fold level: wave
+subsections at their defaults), and `1`/`2`/`3`/`4` set a fold level: wave
 headers only, waves open with subsections folded, and everything open for the
-queued and in-flight waves (shipped and done waves stay folded). `e` swaps the
+queued and in-flight waves (shipped and done waves stay folded), and everything open, finished waves included. `e` swaps the
 emoji state icons for text names (`[deployed]`, `[closed]`, `[in flight]`,
 `[queued]`), `g` reloads, `a` toggles auto-refresh (every
 `waves-dashboard-refresh-interval` seconds, 60 by default; only while the

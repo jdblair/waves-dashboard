@@ -414,3 +414,8 @@ EXTRA-BEADS are added as they are."
     (should (assoc "f/opened" alist))
     (should-not (assoc "s/beads" alist))
     (should-not (assoc "d/merges" alist))))
+
+(ert-deftest waves-dashboard-level-4-opens-everything ()
+  (let ((waves (list (waves-dashboard-wave--make :name "s" :state 'shipped))))
+    (should (equal (mapcar #'cdr (waves-dashboard--fold-alist waves nil nil))
+                   '(nil nil nil nil)))))

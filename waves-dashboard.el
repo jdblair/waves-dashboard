@@ -898,7 +898,7 @@ MODE is nil, `totals' or `priority'."
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
   (vui-text (waves-dashboard--hang
-             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
+             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3/4 fold level · t waves/timeline · T totals · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
              6)
             :face 'waves-dashboard-detail))
 
@@ -1089,6 +1089,11 @@ Shipped and done waves are folded to their headers."
    (lambda (w) (not (waves-dashboard--active-p w)))
    (lambda (w) (if (waves-dashboard--active-p w) nil 'default))))
 
+(defun waves-dashboard-level-4 ()
+  "Open every wave and every subsection, finished waves included."
+  (interactive)
+  (waves-dashboard--set-folds nil nil))
+
 (defvar-keymap waves-dashboard-mode-map
   :parent beads-section-mode-map
   "g" #'waves-dashboard-refresh
@@ -1100,6 +1105,7 @@ Shipped and done waves are folded to their headers."
   "1" #'waves-dashboard-level-1
   "2" #'waves-dashboard-level-2
   "3" #'waves-dashboard-level-3
+  "4" #'waves-dashboard-level-4
   "a" #'waves-dashboard-toggle-auto-refresh
   "q" #'quit-window)
 
