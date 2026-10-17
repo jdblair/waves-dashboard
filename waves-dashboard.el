@@ -898,7 +898,7 @@ MODE is nil, `totals' or `priority'."
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
   (vui-text (waves-dashboard--hang
-             "KEYS: TAB/S-TAB next/prev · SPC fold · t waves/timeline · T totals · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
+             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
              6)
             :face 'waves-dashboard-detail))
 
@@ -1019,12 +1019,65 @@ Only a visible buffer is reloaded; the timer dies with the buffer."
   (when vui--root-instance
     (vui--rerender-instance vui--root-instance)))
 
+(defconst waves-dashboard--subsections '("beads" "merges" "opened")
+  "Names of the foldable subsections inside a wave.")
+
+(defun waves-dashboard--fold-alist (waves wave-folded subs-folded)
+  "Return the explicit fold alist for WAVES.
+WAVE-FOLDED is the folded state of every wave.  SUBS-FOLDED is that of
+every subsection, or `default' to leave subsections at their defaults."
+  (let (alist)
+    (dolist (w waves)
+      (let ((name (waves-dashboard-wave-name w)))
+        (push (cons name wave-folded) alist)
+        (unless (eq subs-folded 'default)
+          (dolist (sub waves-dashboard--subsections)
+            (push (cons (concat name "/" sub) subs-folded) alist)))))
+    (nreverse alist)))
+
+(defun waves-dashboard--set-folds (wave-folded subs-folded)
+  "Fold all waves to WAVE-FOLDED and their subsections to SUBS-FOLDED."
+  (beads-dashboard--bump
+   :collapsed
+   (waves-dashboard--fold-alist waves-dashboard--last-data
+                                wave-folded subs-folded)))
+
+(defun waves-dashboard-collapse-all ()
+  "Fold every wave down to its header."
+  (interactive)
+  (waves-dashboard--set-folds t 'default))
+
+(defun waves-dashboard-expand-all ()
+  "Open every wave, leaving its subsections at their default folds."
+  (interactive)
+  (waves-dashboard--set-folds nil 'default))
+
+(defun waves-dashboard-level-1 ()
+  "Show wave headers only (same as `waves-dashboard-collapse-all')."
+  (interactive)
+  (waves-dashboard-collapse-all))
+
+(defun waves-dashboard-level-2 ()
+  "Open every wave with all its subsections folded."
+  (interactive)
+  (waves-dashboard--set-folds nil t))
+
+(defun waves-dashboard-level-3 ()
+  "Open every wave and every subsection."
+  (interactive)
+  (waves-dashboard--set-folds nil nil))
+
 (defvar-keymap waves-dashboard-mode-map
   :parent beads-section-mode-map
   "g" #'waves-dashboard-refresh
   "t" #'waves-dashboard-toggle-view
   "T" #'waves-dashboard-cycle-totals
   "e" #'waves-dashboard-toggle-emoji
+  "C" #'waves-dashboard-collapse-all
+  "E" #'waves-dashboard-expand-all
+  "1" #'waves-dashboard-level-1
+  "2" #'waves-dashboard-level-2
+  "3" #'waves-dashboard-level-3
   "a" #'waves-dashboard-toggle-auto-refresh
   "q" #'quit-window)
 

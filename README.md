@@ -142,7 +142,9 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 
 `M-x waves-dashboard` opens the current project; with `C-u` it asks for one.
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
-the totals header (off, totals, totals by priority), `e` swaps the
+the totals header (off, totals, totals by priority), `C` collapses and `E` expands all waves (`E` leaves each wave's
+subsections at their defaults), and `1`/`2`/`3` set a fold level: wave
+headers only, waves open with subsections folded, everything open. `e` swaps the
 emoji state icons for text names (`[deployed]`, `[closed]`, `[in flight]`,
 `[queued]`), `g` reloads, `a` toggles auto-refresh (every
 `waves-dashboard-refresh-interval` seconds, 60 by default; only while the
