@@ -1034,17 +1034,24 @@ Only a visible buffer is reloaded; the timer dies with the buffer."
 (defconst waves-dashboard--subsections '("beads" "merges" "opened")
   "Names of the foldable subsections inside a wave.")
 
+(defun waves-dashboard--active-p (wave)
+  "Return non-nil when WAVE is queued or in flight, not shipped or done."
+  (memq (waves-dashboard-wave-state wave) '(queued in-flight)))
+
 (defun waves-dashboard--fold-alist (waves wave-folded subs-folded)
   "Return the explicit fold alist for WAVES.
 WAVE-FOLDED is the folded state of every wave.  SUBS-FOLDED is that of
-every subsection, or `default' to leave subsections at their defaults."
+every subsection, or `default' to leave subsections at their defaults.
+Either may instead be a function of one wave returning its value."
   (let (alist)
     (dolist (w waves)
-      (let ((name (waves-dashboard-wave-name w)))
-        (push (cons name wave-folded) alist)
-        (unless (eq subs-folded 'default)
+      (let ((name (waves-dashboard-wave-name w))
+            (wf (if (functionp wave-folded) (funcall wave-folded w) wave-folded))
+            (sf (if (functionp subs-folded) (funcall subs-folded w) subs-folded)))
+        (push (cons name wf) alist)
+        (unless (eq sf 'default)
           (dolist (sub waves-dashboard--subsections)
-            (push (cons (concat name "/" sub) subs-folded) alist)))))
+            (push (cons (concat name "/" sub) sf) alist)))))
     (nreverse alist)))
 
 (defun waves-dashboard--set-folds (wave-folded subs-folded)
@@ -1075,9 +1082,12 @@ every subsection, or `default' to leave subsections at their defaults."
   (waves-dashboard--set-folds nil t))
 
 (defun waves-dashboard-level-3 ()
-  "Open every wave and every subsection."
+  "Open every queued and in-flight wave with all its subsections.
+Shipped and done waves are folded to their headers."
   (interactive)
-  (waves-dashboard--set-folds nil nil))
+  (waves-dashboard--set-folds
+   (lambda (w) (not (waves-dashboard--active-p w)))
+   (lambda (w) (if (waves-dashboard--active-p w) nil 'default))))
 
 (defvar-keymap waves-dashboard-mode-map
   :parent beads-section-mode-map

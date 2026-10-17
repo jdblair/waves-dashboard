@@ -397,3 +397,20 @@ EXTRA-BEADS are added as they are."
             (select-window first)
             (should-not (eq (waves-dashboard--display-adjacent buf nil) first)))
         (kill-buffer buf)))))
+
+(ert-deftest waves-dashboard-level-3-opens-only-active-waves ()
+  (let* ((waves (list (waves-dashboard-wave--make :name "q" :state 'queued)
+                      (waves-dashboard-wave--make :name "f" :state 'in-flight)
+                      (waves-dashboard-wave--make :name "s" :state 'shipped)
+                      (waves-dashboard-wave--make :name "d" :state 'done)))
+         (alist (waves-dashboard--fold-alist
+                 waves
+                 (lambda (w) (not (waves-dashboard--active-p w)))
+                 (lambda (w) (if (waves-dashboard--active-p w) nil 'default)))))
+    (should (equal (mapcar (lambda (n) (cdr (assoc n alist))) '("q" "f" "s" "d"))
+                   '(nil nil t t)))
+    ;; Subsections are opened for active waves only.
+    (should (assoc "q/beads" alist))
+    (should (assoc "f/opened" alist))
+    (should-not (assoc "s/beads" alist))
+    (should-not (assoc "d/merges" alist))))
