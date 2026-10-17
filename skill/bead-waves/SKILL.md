@@ -46,8 +46,12 @@ Pick a model per bead when you spawn its agent (the Agent tool's `model`).
 - **The reviewer is always the stronger model**, or a cheap model's mistakes
   go unseen.
 
-Record it with `wave model <name> <id> <model>` as you spawn each agent (and
-again on a retry); the dashboard shows it beside the bead.
+Always pass `model` explicitly: an agent spawned without one inherits the
+session's model, so a session left on `sonnet` would silently run every bead
+cheap. Record it with `wave model <name> <id> <model>` as you spawn each
+agent (and again on a retry); the dashboard shows it beside the bead. If an
+agent was spawned without a `model`, record the session's model with
+`--inherited`, so the record says it was not a choice.
 
 ## Where agents work
 

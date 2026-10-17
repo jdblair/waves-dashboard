@@ -8,7 +8,7 @@ Three parts, meant to be used together:
 
 | Part | Path | What it does |
 |------|------|--------------|
-| `wave` CLI | `bin/wave` | Records wave facts in the project's beads: labels member beads `wave-<name>`, and writes `bd kv` keys `wave.<name>.title`, `.dispatched`, `.deployed`, and `.model.<bead id>`. kv touches no bead, so no `updated_at` is bumped. |
+| `wave` CLI | `bin/wave` | Records wave facts in the project's beads: labels member beads `wave-<name>`, and writes `bd kv` keys `wave.<name>.title`, `.dispatched`, `.deployed`, `.model.<bead id>`, and `.modelsrc.<bead id>` (`chosen`, or `inherited` when no model was passed to the agent). kv touches no bead, so no `updated_at` is bumped. |
 | waves-dashboard | `waves-dashboard.el` | `M-x waves-dashboard`: an Emacs view of a project's waves (beads, trunk merges, deploy, beads opened while each ran), or a chronological time spine (`t`). Read-only. |
 | bead-waves skill | `skill/bead-waves/SKILL.md` | The Claude Code skill that runs waves and calls `wave` to record them. |
 

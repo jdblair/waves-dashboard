@@ -9,6 +9,9 @@ bd kv so that no bead's updated_at is bumped:
   wave.<name>.dispatched  ISO-8601 UTC
   wave.<name>.deployed    ISO-8601 UTC, a space, the trunk sha
   wave.<name>.model.<id>  model the agent for bead <id> ran on
+  wave.<name>.modelsrc.<id>  `chosen` (model passed to the agent) or
+                          `inherited` (none passed: the session's model);
+                          absent on records from before this key existed
 
 <name> is the label suffix: wave-12 -> 12, wave-k3x -> k3x.
 
@@ -20,7 +23,10 @@ Usage:
   wave deployed <name> [--sha SHA] [--at ISO]
                                              record the deploy (sha defaults
                                              to trunk, else HEAD)
-  wave model <name> <id> <model>             record the model a bead's agent used
+  wave model <name> <id> <model> [--inherited]
+                                             record the model a bead's agent used;
+                                             --inherited when the Agent call passed
+                                             no model, so <model> is the session's
   wave show [<name>]                         print the recorded facts
 
 Writes stay in the Dolt working set (auto-commit is off by default); commit
@@ -115,8 +121,10 @@ def cmd_deployed(a):
 
 
 def cmd_model(a):
+    src = "inherited" if a.inherited else "chosen"
     bd("kv", "set", f"wave.{a.name}.model.{a.id}", a.model)
-    print(f"wave {a.name}: {a.id} on {a.model}")
+    bd("kv", "set", f"wave.{a.name}.modelsrc.{a.id}", src)
+    print(f"wave {a.name}: {a.id} on {a.model} ({src})")
 
 
 def cmd_show(a):
@@ -158,6 +166,8 @@ def main():
     s.add_argument("name", type=check_name)
     s.add_argument("id")
     s.add_argument("model")
+    s.add_argument("--inherited", action="store_true",
+                   help="no model was passed to the agent; MODEL is the session's")
     s.set_defaults(fn=cmd_model)
 
     s = sub.add_parser("show")
