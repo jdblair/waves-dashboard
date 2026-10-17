@@ -962,14 +962,14 @@ MODE is nil, `totals' or `priority'."
   (interactive)
   (beads-dashboard--bump
    :generation
-   (1+ (or (plist-get (vui-instance-state vui--root-instance) :generation) 0))))
+   (1+ (or (plist-get (vui-instance-state (vui--buffer-root)) :generation) 0))))
 
 (defun waves-dashboard-toggle-view ()
   "Switch between the per-wave sections and the time spine."
   (interactive)
   (beads-dashboard--bump
    :view
-   (if (eq (plist-get (vui-instance-state vui--root-instance) :view) 'spine)
+   (if (eq (plist-get (vui-instance-state (vui--buffer-root)) :view) 'spine)
        'waves 'spine)))
 
 (defun waves-dashboard-cycle-totals ()
@@ -977,7 +977,7 @@ MODE is nil, `totals' or `priority'."
   (interactive)
   (beads-dashboard--bump
    :totals
-   (pcase (plist-get (vui-instance-state vui--root-instance) :totals)
+   (pcase (plist-get (vui-instance-state (vui--buffer-root)) :totals)
      ('nil 'totals) ('totals 'priority) (_ nil))))
 
 (defun waves-dashboard-toggle-emoji ()
@@ -985,7 +985,7 @@ MODE is nil, `totals' or `priority'."
   (interactive)
   (beads-dashboard--bump
    :emoji
-   (not (plist-get (vui-instance-state vui--root-instance) :emoji))))
+   (not (plist-get (vui-instance-state (vui--buffer-root)) :emoji))))
 
 (defun waves-dashboard--tick (buffer)
   "Reload BUFFER if it is live and shown; stop the timer when it is gone."
@@ -1016,8 +1016,8 @@ Only a visible buffer is reloaded; the timer dies with the buffer."
                (format "on (every %ds)" waves-dashboard-refresh-interval)
              "off"))
   ;; Redraw the header's " · auto" marker; the data is unchanged.
-  (when vui--root-instance
-    (vui--rerender-instance vui--root-instance)))
+  (when (vui--buffer-root)
+    (vui--rerender-instance (vui--buffer-root))))
 
 (defconst waves-dashboard--subsections '("beads" "merges" "opened")
   "Names of the foldable subsections inside a wave.")
