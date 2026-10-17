@@ -141,6 +141,8 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 ## Reading the dashboard
 
 `M-x waves-dashboard` opens the current project; with `C-u` it asks for one.
+`M-x waves-dashboard-new-window` does the same in the window beside the current one
+(right, below, left, then above; it splits when the window is alone).
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
 the totals header (off, totals, totals by priority), `C` collapses and `E` expands all waves (`E` leaves each wave's
 subsections at their defaults), and `1`/`2`/`3` set a fold level: wave

@@ -1091,6 +1091,42 @@ every subsection, or `default' to leave subsections at their defaults."
   (setq-local revert-buffer-function
               (lambda (_ignore _noconfirm) (waves-dashboard-refresh))))
 
+(defun waves-dashboard--adjacent-window ()
+  "Return a live window beside the selected one, or nil when there is none.
+Tries right, below, left, then above; skips the minibuffer."
+  (cl-some (lambda (dir)
+             (let ((win (window-in-direction dir)))
+               (and win (not (window-minibuffer-p win)) win)))
+           '(right below left above)))
+
+(defun waves-dashboard--display-adjacent (buffer _alist)
+  "Display BUFFER in a window beside the selected one; return that window.
+Reuses another window already showing BUFFER, else the adjacent window,
+else splits the selected one.  Returns nil, leaving the choice to
+`display-buffer', when none of those is possible."
+  (when-let* ((win (or (cl-find-if (lambda (w) (not (eq w (selected-window))))
+                                  (get-buffer-window-list buffer nil t))
+                       (waves-dashboard--adjacent-window)
+                       (split-window-sensibly))))
+    (set-window-buffer win buffer)
+    win))
+
+;;;###autoload
+(defun waves-dashboard-new-window (&optional pick)
+  "Like `waves-dashboard', but show it in the window beside this one.
+Splits the window when it is alone.  With prefix argument PICK,
+prompt for the project.
+
+`vui-mount' ends in `switch-to-buffer', which would put the dashboard
+in this window before `waves-dashboard' pops to it; that call is
+turned into a plain `set-buffer' so the pop decides the window."
+  (interactive "P")
+  (let ((display-buffer-overriding-action
+         (cons (list #'waves-dashboard--display-adjacent) nil)))
+    (cl-letf (((symbol-function 'switch-to-buffer)
+               (lambda (buffer &rest _) (set-buffer buffer))))
+      (waves-dashboard pick))))
+
 ;;;###autoload
 (defun waves-dashboard (&optional pick)
   "Show the bead-waves dashboard for the current project.

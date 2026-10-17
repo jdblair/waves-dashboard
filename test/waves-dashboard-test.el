@@ -373,3 +373,27 @@ EXTRA-BEADS are added as they are."
                      (,(concat name "/opened") . t))))
     (should (equal (mapcar #'cdr (waves-dashboard--fold-alist waves nil nil))
                    '(nil nil nil nil)))))
+
+(ert-deftest waves-dashboard-display-adjacent ()
+  (save-window-excursion
+    (delete-other-windows)
+    (let ((buf (generate-new-buffer " *wd-adjacent*"))
+          (first (selected-window)))
+      (unwind-protect
+          (progn
+            ;; Alone: it splits, and the new window shows the buffer.
+            (let ((win (waves-dashboard--display-adjacent buf nil)))
+              (should (window-live-p win))
+              (should-not (eq win first))
+              (should (eq (window-buffer win) buf)))
+            ;; Shown in another window: it is reused, nothing else splits.
+            (let ((n (length (window-list))))
+              (should (eq (waves-dashboard--display-adjacent buf nil)
+                          (get-buffer-window buf)))
+              (should (= n (length (window-list)))))
+            ;; Shown only in the selected window: it still moves beside it.
+            (set-window-buffer (get-buffer-window buf) (window-buffer first))
+            (set-window-buffer first buf)
+            (select-window first)
+            (should-not (eq (waves-dashboard--display-adjacent buf nil) first)))
+        (kill-buffer buf)))))
