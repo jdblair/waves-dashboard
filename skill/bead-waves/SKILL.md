@@ -211,6 +211,21 @@ committed. You can resume it with `SendMessage` and ask for the report it
 never delivered, saying the stop was your call and asking what it had *not*
 finished.
 
+**When the owner stops an agent**, it cannot be resumed: `SendMessage`
+refuses. Clean up and retry once with a fresh agent:
+
+1. Look at what it left (`git status`, `git diff`, its branch or worktree).
+   The work is uncommitted and untested; never commit it as is.
+2. Spawn one fresh agent with the original brief plus: "a previous agent was
+   stopped partway; its unverified changes are in these files; judge each part
+   against the brief, keep what is right, fix or finish the rest". Name where
+   it stopped if the notification says.
+3. If the retry is stopped or fails too, don't spawn a third: revert or park
+   the changes, leave the bead open with a comment, and tell the owner.
+
+Ask the owner first only if the stop might have meant "don't do this at all"
+rather than "not like this".
+
 ## Bookkeeping
 
 Read issue IDs back from the create command's output before citing them in
