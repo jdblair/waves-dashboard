@@ -397,3 +397,166 @@ EXTRA-BEADS are added as they are."
             (select-window first)
             (should-not (eq (waves-dashboard--display-adjacent buf nil) first)))
         (kill-buffer buf)))))
+
+;;; Review and merge phases
+
+(defun wdt--phase-wave (kv &optional status)
+  "Wave 1: one bead with STATUS (default closed) and the kv facts KV."
+  (wdt--wave "1" (waves-dashboard--model
+                  (list `((id . "demo-a") (status . ,(or status "closed"))
+                          (labels "wave-1")
+                          (closed_at . "2026-10-16T10:30:00Z")))
+                  (append '((wave.1.dispatched . "2026-10-16T10:00:00Z")) kv)
+                  nil nil (waves-dashboard--time "2026-10-16T12:00:00Z"))))
+
+(defconst wdt--rs '(wave.1.review.started . "2026-10-16T10:40:00Z"))
+(defconst wdt--rf '(wave.1.review.finished . "2026-10-16T11:00:00Z findings=3 fixed=2"))
+(defconst wdt--ms '(wave.1.merge.started . "2026-10-16T11:10:00Z"))
+(defconst wdt--mc '(wave.1.merge.completed . "2026-10-16T11:15:00Z abc1234"))
+(defconst wdt--dp '(wave.1.deployed . "2026-10-16T11:30:00Z abc1234"))
+
+(ert-deftest waves-dashboard-phase-state-precedence ()
+  (dolist (case `((nil done)
+                  ((,wdt--rs) in-review)  ; all closed, but review beats done
+                  ((,wdt--rs ,wdt--rf) reviewed)
+                  ((,wdt--rs ,wdt--rf ,wdt--ms) merging)
+                  ((,wdt--ms) merging)    ; review skipped
+                  ((,wdt--rs ,wdt--ms ,wdt--mc) merged)
+                  ((,wdt--mc) merged)
+                  ((,wdt--rs ,wdt--rf ,wdt--ms ,wdt--mc ,wdt--dp) shipped)
+                  ((,wdt--mc ,wdt--dp) shipped)))
+    (should (equal (list (car case)
+                         (waves-dashboard-wave-state (wdt--phase-wave (car case))))
+                   case))))
+
+(ert-deftest waves-dashboard-phase-beats-in-flight ()
+  (should (eq (waves-dashboard-wave-state (wdt--phase-wave nil "open")) 'in-flight))
+  (should (eq (waves-dashboard-wave-state
+               (wdt--phase-wave (list wdt--rs) "open"))
+              'in-review)))
+
+(ert-deftest waves-dashboard-phase-kv-parsed ()
+  (let ((w (wdt--phase-wave (list wdt--rs wdt--rf wdt--ms wdt--mc))))
+    (should (= (waves-dashboard-wave-review-started w)
+               (waves-dashboard--time "2026-10-16T10:40:00Z")))
+    (should (= (waves-dashboard-wave-review-finished w)
+               (waves-dashboard--time "2026-10-16T11:00:00Z")))
+    (should (equal (list (waves-dashboard-wave-findings w)
+                         (waves-dashboard-wave-fixed w))
+                   '(3 2)))
+    (should (= (waves-dashboard-wave-merge-completed w)
+               (waves-dashboard--time "2026-10-16T11:15:00Z")))
+    (should (equal (waves-dashboard-wave-merge-sha w) "abc1234"))
+    (should (equal (waves-dashboard--findings-text w) "3 findings, 2 fixed")))
+  ;; No counts recorded: no counts shown.  One finding is singular.
+  (let ((w (wdt--phase-wave '((wave.1.review.started . "2026-10-16T10:40:00Z")
+                              (wave.1.review.finished . "2026-10-16T11:00:00Z")))))
+    (should (waves-dashboard-wave-review-finished w))
+    (should-not (waves-dashboard--findings-text w)))
+  (should (equal (waves-dashboard--findings-text
+                  (waves-dashboard-wave--make :findings 1))
+                 "1 finding")))
+
+(ert-deftest waves-dashboard-phase-header-and-lines ()
+  (let ((reviewing (wdt--phase-wave (list wdt--rs)))
+        (reviewed (wdt--phase-wave (list wdt--rs wdt--rf)))
+        (merging (wdt--phase-wave (list wdt--rs wdt--rf wdt--ms)))
+        (merged (wdt--phase-wave (list wdt--ms wdt--mc))))
+    (should (string-match-p " · in review since "
+                            (waves-dashboard--header-title reviewing)))
+    (should (string-match-p " · reviewed .* (3 findings, 2 fixed)\\'"
+                            (waves-dashboard--header-title reviewed)))
+    (should (string-match-p " · merging since "
+                            (waves-dashboard--header-title merging)))
+    (should (string-match-p " · merged .* (abc1234)\\'"
+                            (waves-dashboard--header-title merged)))
+    (should (equal (length (waves-dashboard--phase-lines reviewing)) 1))
+    (should (equal (length (waves-dashboard--phase-lines merging)) 2))
+    ;; Review skipped: only the merge line.
+    (should (equal (length (waves-dashboard--phase-lines merged)) 1))
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          merging nil #'ignore
+                          (lambda (_ d) (cons d #'ignore))))
+      (let ((text (buffer-string)))
+        (should (string-match-p
+                 "^    Review started .* · finished .* · 3 findings, 2 fixed$" text))
+        (should (string-match-p "^    Merge started [^·\n]*$" text))
+        ;; Phase lines come before the Dispatched subsection.
+        (should (< (string-match "Review started" text)
+                   (string-match "Dispatched" text)))))
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          merged nil #'ignore
+                          (lambda (_ d) (cons d #'ignore))))
+      (should (string-match-p "^    Merge started .* · completed .* · abc1234$"
+                              (buffer-string)))
+      (should-not (string-match-p "Review" (buffer-string))))
+    ;; A collapsed wave shows its header only.
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          merging t #'ignore
+                          (lambda (_ d) (cons d #'ignore))))
+      (should-not (string-match-p "Review started" (buffer-string))))))
+
+(ert-deftest waves-dashboard-phase-events ()
+  (let* ((w (wdt--phase-wave (list wdt--rs wdt--rf wdt--ms wdt--mc)))
+         (events (cl-remove-if-not
+                  (lambda (e) (string-match-p "\\`\\(review\\|merge\\)-"
+                                              (plist-get e :kind)))
+                  (waves-dashboard--events (list w)))))
+    (should (equal (mapcar (lambda (e) (list (plist-get e :kind) (plist-get e :text)))
+                           events)
+                   '(("review-started" "") ("review-finished" "3 findings, 2 fixed")
+                     ("merge-started" "") ("merge-completed" "abc1234"))))
+    (should (equal (plist-get (car events) :time)
+                   (waves-dashboard--time "2026-10-16T10:40:00Z")))))
+
+(ert-deftest waves-dashboard-phase-icons-distinct ()
+  (let ((states (mapcar #'car waves-dashboard--states)))
+    (should (equal states '(shipped merged merging reviewed in-review
+                            done in-flight queued)))
+    (dolist (emoji '(t nil))
+      (let* ((waves-dashboard--emoji emoji)
+             (icons (mapcar #'waves-dashboard--state-icon states)))
+        (should (= (length (delete-dups (copy-sequence icons))) (length states)))))
+    (let ((waves-dashboard--emoji nil))
+      (should (equal (mapcar #'waves-dashboard--state-icon
+                             '(in-review reviewed merging merged))
+                     '("[in review]" "[reviewed]" "[merging]" "[merged]"))))))
+
+(ert-deftest waves-dashboard-phase-requeued-and-collapse ()
+  ;; demo-a is open in wave 1 and in a later wave 2.  A later wave still in
+  ;; review has not finished, so demo-a moved on to it; a merged one has.
+  (cl-flet ((model (kv)
+              (waves-dashboard--model
+               (list '((id . "demo-a") (status . "open") (labels "wave-1" "wave-2")))
+               (append '((wave.1.dispatched . "2026-10-16T10:00:00Z")
+                         (wave.2.dispatched . "2026-10-16T11:00:00Z"))
+                       kv)
+               nil nil (waves-dashboard--time "2026-10-16T12:00:00Z"))))
+    (dolist (case '((wave.2.review.started . in-review)
+                    (wave.2.review.finished . reviewed)
+                    (wave.2.merge.started . merging)))
+      (let* ((waves (model (list (cons (car case) "2026-10-16T11:30:00Z"))))
+             (w1 (wdt--wave "1" waves)))
+        (should (eq (waves-dashboard-wave-state (wdt--wave "2" waves)) (cdr case)))
+        (should (equal (waves-dashboard-wave-requeued w1) '(("demo-a" . "2"))))))
+    (let ((waves (model '((wave.2.merge.started . "2026-10-16T11:30:00Z")
+                          (wave.2.merge.completed . "2026-10-16T11:40:00Z")))))
+      (should-not (waves-dashboard-wave-requeued (wdt--wave "1" waves)))))
+  ;; Merged waves count as finished for the expanded-shipped limit.
+  (let ((waves-dashboard-expanded-shipped 1))
+    (should (equal (waves-dashboard--default-collapsed
+                    (list (waves-dashboard-wave--make :name "2" :state 'merged)
+                          (waves-dashboard-wave--make :name "1" :state 'shipped)
+                          (waves-dashboard-wave--make :name "3" :state 'in-review)))
+                   '("1")))))
+
+(ert-deftest waves-dashboard-phase-totals-labels ()
+  (let ((lines (waves-dashboard--totals-lines
+                (waves-dashboard--totals
+                 (list (waves-dashboard-wave--make :name "1" :state 'in-review)
+                       (waves-dashboard-wave--make :name "2" :state 'merged)))
+                nil)))
+    (should (string-match-p "2 waves (1 merged, 1 in review)" (car lines)))))

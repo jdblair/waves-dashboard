@@ -8,7 +8,7 @@ Three parts, meant to be used together:
 
 | Part | Path | What it does |
 |------|------|--------------|
-| `wave` CLI | `bin/wave` | Records wave facts in the project's beads: labels member beads `wave-<name>`, and writes `bd kv` keys `wave.<name>.title`, `.dispatched`, `.deployed`, `.model.<bead id>`, and `.modelsrc.<bead id>` (`chosen`, or `inherited` when no model was passed to the agent). kv touches no bead, so no `updated_at` is bumped. |
+| `wave` CLI | `bin/wave` | Records wave facts in the project's beads: labels member beads `wave-<name>`, and writes `bd kv` keys `wave.<name>.title`, `.dispatched`, `.deployed`, the review and merge phases (`.review.started`, `.review.finished`, `.merge.started`, `.merge.completed`), `.model.<bead id>`, and `.modelsrc.<bead id>` (`chosen`, or `inherited` when no model was passed to the agent). kv touches no bead, so no `updated_at` is bumped. |
 | waves-dashboard | `waves-dashboard.el` | `M-x waves-dashboard`: an Emacs view of a project's waves (beads, trunk merges, deploy, beads opened while each ran), or a chronological time spine (`t`). Read-only. |
 | bead-waves skill | `skill/bead-waves/SKILL.md` | The Claude Code skill that runs waves and calls `wave` to record them. |
 
@@ -147,22 +147,28 @@ Keys: `t` switches between the per-wave view and the time spine, `T` cycles
 the totals header (off, totals, totals by priority), `C` collapses and `E` expands all waves (`E` leaves each wave's
 subsections at their defaults), and `1`/`2`/`3` set a fold level: wave
 headers only, waves open with subsections folded, everything open. `e` swaps the
-emoji state icons for text names (`[deployed]`, `[closed]`, `[in flight]`,
-`[queued]`), `g` reloads, `a` toggles auto-refresh (every
+emoji state icons for text names (`[deployed]`, `[merged]`, `[merging]`,
+`[reviewed]`, `[in review]`, `[closed]`, `[in flight]`, `[queued]`), `g` reloads, `a` toggles auto-refresh (every
 `waves-dashboard-refresh-interval` seconds, 60 by default; only while the
 buffer is visible), `RET` visits the bead at point, `q` quits.
 
-Each wave's header shows its state:
+Each wave's header shows its state. The first row that applies wins:
 
-| Icon | Header ends with | Meaning |
-|------|------------------|---------|
-| 🚀 | `· deployed <time> (<sha>)` | A deploy is recorded. |
-| ✅ | `· all closed, no deploy` | Every bead with the wave's label is closed and nothing was deployed. |
-| 🚧 | `· in flight` | Started (dispatched, merged, or a bead in progress or closed), but not all beads are closed. |
-| 📋 | `· queued` | Beads are labelled, nothing has happened yet. |
+| Icon | Text | Header ends with | Meaning |
+|------|------|------------------|---------|
+| 🚀 | `[deployed]` | `· deployed <time> (<sha>)` | A deploy is recorded. |
+| 📦 | `[merged]` | `· merged <time> (<sha>)` | `wave merge done` ran: the wave is committed to trunk, not deployed yet. |
+| 🔀 | `[merging]` | `· merging since <time>` | `wave merge start` ran, `wave merge done` not yet. |
+| 📝 | `[reviewed]` | `· reviewed <time> (<n> findings, <m> fixed)` | `wave review done` ran: the review's fixes are in and the suites pass. |
+| 🔍 | `[in review]` | `· in review since <time>` | `wave review start` ran, `wave review done` not yet. |
+| ✅ | `[closed]` | `· all closed, no deploy` | Every bead with the wave's label is closed and nothing was deployed. |
+| 🚧 | `[in flight]` | `· in flight` | Started (dispatched, merged, or a bead in progress or closed), but not all beads are closed. |
+| 📋 | `[queued]` | `· queued` | Beads are labelled, nothing has happened yet. |
 
 A recorded deploy always wins, so a wave shows 🚀 even if some of its beads
-are still open. A deploy time with a leading `~` has no kv record. It was
+are still open. Likewise a recorded phase beats the bead statuses: a wave
+whose beads are all closed but whose review is running shows 🔍, not ✅.
+Review is optional, so a wave can go straight from in flight to merging. A deploy time with a leading `~` has no kv record. It was
 inferred from `Deployed … (trunk <sha>…)` close reasons and timed by the
 wave's latest close.
 
@@ -194,6 +200,13 @@ A wave's first line says when it started:
   `Merge <ids>:` with one of those ids labelled for the wave. This start is
   always later than the real one, by however long the first agent took.
 
+Above that line, an open wave shows one line per recorded phase:
+`Review started <time> · finished <time> · <n> findings, <m> fixed` and
+`Merge started <time> · completed <time> · <sha>` (the parts not yet
+recorded are left out). The time spine (`t`) has an event for each:
+`review-started`, `review-finished` (with the counts), `merge-started`
+and `merge-completed` (with the sha).
+
 A missing dispatch record is normal for waves that ran before `wave` was
 used: a backfill only fills facts with a source. On a new wave it means the
 orchestrating session skipped `wave dispatch`.
@@ -206,10 +219,15 @@ gets the bead.
 
 ## Development
 
-    make test    # 11 ERT tests on synthetic fixtures (test/fixtures/)
-    make check   # byte-compile with all warnings shown
+    make test        # both suites below
+    make test-el     # ERT tests on synthetic fixtures (test/fixtures/)
+    make test-wave   # bin/wave tests (test/test_wave.py), against a stub bd
+    make check       # byte-compile with all warnings shown
 
-Both take dependencies from `ELPA` (default `~/.emacs.d/elpa`), adding every
+The `bin/wave` tests put a stub `bd` first on `PATH` that keeps kv in a
+temporary JSON file, so they never touch a real beads database.
+
+`test-el` and `check` take dependencies from `ELPA` (default `~/.emacs.d/elpa`), adding every
 package directory plus `beads/lisp`, where beads.el keeps its sources. Override
 `ELPA` or `LOAD_PATH` if yours live elsewhere.
 

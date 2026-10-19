@@ -138,9 +138,23 @@ gap nobody can fill later.
 
 ```bash
 wave dispatch <name> --title "<what the wave is>" <ids...>   # as agents start
-wave deployed <name>                                       # right after the deploy
+wave review start <name>                                   # as the reviewer is spawned
+wave review done <name> --findings N --fixed M             # its fixes are in, suites pass
+wave merge start <name>                                    # before committing the wave
+wave merge done <name>                                     # right after the commit
+wave deployed <name>                                       # right after the push/deploy
 wave plan <name> --title "…" <ids...>                      # plan ahead, don't start
 ```
+
+- **Review and merge phases.** Call `wave review start` when you spawn the
+  reviewer, and `wave review done --findings N --fixed M` once its fixes are
+  in and the suites pass (N: findings it reported, M: how many you fixed).
+  Call `wave merge start` before committing the wave and `wave merge done`
+  after the commit (it takes trunk's sha; `--sha` to override), then
+  `wave deployed` after the push. A wave with no review simply skips
+  `wave review`: `wave merge start` doesn't need one. `done` refuses
+  without its `start`; starting a phase again overwrites it with a warning
+  and clears its end. All take `--at <ISO with offset>` when recording late.
 
 - `<name>` is the label suffix: `wave-12` is named `12`; a one-issue wave
   can use the issue's short id.
@@ -155,6 +169,10 @@ wave plan <name> --title "…" <ids...>                      # plan ahead, don't
   `bd dolt commit`.
 
 ## Review and merge
+
+Record both phases (see Record the wave): `wave review start` /
+`wave review done` around the review, `wave merge start` /
+`wave merge done` around the commit.
 
 Tell the reviewer the suite passes, so it skips what tests already catch;
 name the riskiest invariant first; ask for CONFIRMED vs PLAUSIBLE; ask it

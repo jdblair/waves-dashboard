@@ -8,12 +8,23 @@ bd kv so that no bead's updated_at is bumped:
   wave.<name>.title       free text
   wave.<name>.dispatched  ISO-8601 UTC
   wave.<name>.deployed    ISO-8601 UTC, a space, the trunk sha
+  wave.<name>.review.started   ISO-8601 UTC: the reviewer was spawned
+  wave.<name>.review.finished  ISO-8601 UTC, then optionally a space and
+                          `findings=N fixed=M` (either part may be absent)
+  wave.<name>.merge.started    ISO-8601 UTC: committing the wave began
+  wave.<name>.merge.completed  ISO-8601 UTC, then optionally a space and
+                          the trunk sha
   wave.<name>.model.<id>  model the agent for bead <id> ran on
   wave.<name>.modelsrc.<id>  `chosen` (model passed to the agent) or
                           `inherited` (none passed: the session's model);
                           absent on records from before this key existed
 
 <name> is the label suffix: wave-12 -> 12, wave-k3x -> k3x.
+
+Review and merge are optional phases.  `done` needs its `start`;
+`merge start` does not need a review, so a wave can skip review.  Starting
+a phase again overwrites its start (with a warning) and clears its end,
+so the dashboard shows the phase as running again.
 
 Usage:
   wave plan <name> [--title T] <id>...       label beads, set title
@@ -23,6 +34,13 @@ Usage:
   wave deployed <name> [--sha SHA] [--at ISO]
                                              record the deploy (sha defaults
                                              to trunk, else HEAD)
+  wave review start <name> [--at ISO]        the reviewer was spawned
+  wave review done <name> [--findings N] [--fixed M] [--at ISO]
+                                             its fixes are in, suites pass
+  wave merge start <name> [--at ISO]         about to commit the wave
+  wave merge done <name> [--sha SHA] [--at ISO]
+                                             committed (sha defaults to
+                                             trunk, else HEAD, else none)
   wave model <name> <id> <model> [--inherited]
                                              record the model a bead's agent used;
                                              --inherited when the Agent call passed
@@ -80,13 +98,22 @@ def label_beads(name, ids):
     return todo
 
 
-def git_sha():
+def git_sha(required=True):
     for ref in ("trunk", "HEAD"):
-        r = subprocess.run(["git", "rev-parse", "--short", ref],
-                           capture_output=True, text=True)
+        try:
+            r = subprocess.run(["git", "rev-parse", "--short", ref],
+                               capture_output=True, text=True)
+        except FileNotFoundError:
+            break
         if r.returncode == 0:
             return r.stdout.strip()
-    sys.exit("wave: no git trunk or HEAD here; pass --sha")
+    if required:
+        sys.exit("wave: no git trunk or HEAD here; pass --sha")
+    return None
+
+
+def warn(msg):
+    print(f"wave: warning: {msg}", file=sys.stderr)
 
 
 def check_name(name):
@@ -120,6 +147,76 @@ def cmd_deployed(a):
     print(f"wave {a.name}: deployed {at} at {sha}")
 
 
+# Phase -> (start key, end key), under wave.<name>.
+PHASES = {
+    "review": ("review.started", "review.finished"),
+    "merge": ("merge.started", "merge.completed"),
+}
+
+
+def phase_start(a, phase):
+    start, end = PHASES[phase]
+    at = iso_utc(a.at)
+    kv = kv_all()
+    old = kv.get(f"wave.{a.name}.{start}")
+    if old is not None:
+        warn(f"wave {a.name}: {phase} already started {old}; overwriting")
+    if f"wave.{a.name}.{end}" in kv:
+        warn(f"wave {a.name}: clearing {end} {kv[f'wave.{a.name}.{end}']}")
+        bd("kv", "clear", f"wave.{a.name}.{end}")
+    bd("kv", "set", f"wave.{a.name}.{start}", at)
+    return kv, at
+
+
+def phase_end(a, phase, extra):
+    start, end = PHASES[phase]
+    kv = kv_all()
+    if f"wave.{a.name}.{start}" not in kv:
+        sys.exit(f"wave: wave {a.name} has no {start}; "
+                 f"run `wave {phase} start {a.name}` first")
+    old = kv.get(f"wave.{a.name}.{end}")
+    if old is not None:
+        warn(f"wave {a.name}: {phase} already {end.split('.')[1]} {old}; overwriting")
+    at = iso_utc(a.at)
+    began = str(kv[f"wave.{a.name}.{start}"]).split(" ")[0]
+    if at < began:  # both written by iso_utc, so they sort as text
+        warn(f"wave {a.name}: {end} {at} is before {start} {began}")
+    value = " ".join([at, *extra])
+    bd("kv", "set", f"wave.{a.name}.{end}", value)
+    return value
+
+
+def cmd_review(a):
+    if a.action == "start":
+        _, at = phase_start(a, "review")
+        print(f"wave {a.name}: review started {at}")
+    else:
+        extra = [f"{k}={v}" for k, v in (("findings", a.findings), ("fixed", a.fixed))
+                 if v is not None]
+        value = phase_end(a, "review", extra)
+        print(f"wave {a.name}: review finished {value}")
+
+
+def cmd_merge(a):
+    if a.action == "start":
+        kv, at = phase_start(a, "merge")
+        if (f"wave.{a.name}.review.started" in kv
+                and f"wave.{a.name}.review.finished" not in kv):
+            warn(f"wave {a.name}: review started but not finished")
+        print(f"wave {a.name}: merge started {at}")
+    else:
+        sha = a.sha or git_sha(required=False)
+        value = phase_end(a, "merge", [sha] if sha else [])
+        print(f"wave {a.name}: merge completed {value}")
+
+
+def count(s):
+    n = int(s)
+    if n < 0:
+        raise argparse.ArgumentTypeError(f"must be 0 or more: {s}")
+    return n
+
+
 def cmd_model(a):
     src = "inherited" if a.inherited else "chosen"
     bd("kv", "set", f"wave.{a.name}.model.{a.id}", a.model)
@@ -131,12 +228,17 @@ def cmd_show(a):
     kv = kv_all()
     rows = {}
     for k, v in kv.items():
-        m = re.match(r"^wave\.(.+)\.(title|dispatched|deployed)$", k)
+        m = re.match(r"^wave\.(.+)\.(title|dispatched|deployed"
+                     r"|review\.started|review\.finished"
+                     r"|merge\.started|merge\.completed)$", k)
         if m and (a.name is None or m.group(1) == a.name):
             rows.setdefault(m.group(1), {})[m.group(2)] = v
     for name in sorted(rows, key=lambda n: (not n.isdigit(), int(n) if n.isdigit() else 0, n)):
         r = rows[name]
         print(f"wave-{name}\t{r.get('dispatched', '-')}\t{r.get('deployed', '-')}\t{r.get('title', '')}")
+        for phase, (start, end) in PHASES.items():
+            if start in r or end in r:
+                print(f"  {phase}\t{r.get(start, '-')}\t{r.get(end, '-')}")
 
 
 def main():
@@ -161,6 +263,29 @@ def main():
     s.add_argument("--sha")
     s.add_argument("--at")
     s.set_defaults(fn=cmd_deployed)
+
+    s = sub.add_parser("review")
+    s.set_defaults(fn=cmd_review)
+    act = s.add_subparsers(dest="action", required=True)
+    t = act.add_parser("start")
+    t.add_argument("name", type=check_name)
+    t.add_argument("--at")
+    t = act.add_parser("done")
+    t.add_argument("name", type=check_name)
+    t.add_argument("--findings", type=count)
+    t.add_argument("--fixed", type=count)
+    t.add_argument("--at")
+
+    s = sub.add_parser("merge")
+    s.set_defaults(fn=cmd_merge)
+    act = s.add_subparsers(dest="action", required=True)
+    t = act.add_parser("start")
+    t.add_argument("name", type=check_name)
+    t.add_argument("--at")
+    t = act.add_parser("done")
+    t.add_argument("name", type=check_name)
+    t.add_argument("--sha")
+    t.add_argument("--at")
 
     s = sub.add_parser("model")
     s.add_argument("name", type=check_name)

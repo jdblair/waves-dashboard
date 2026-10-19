@@ -27,7 +27,9 @@
 ;; Data, all read-only:
 ;;   - membership: `wave-<name>' bead labels;
 ;;   - wave facts: bd kv keys wave.<name>.title / .dispatched / .deployed,
-;;     and wave.<name>.model.<bead id>, written by the `wave' script (bin/wave in this repo);
+;;     the review and merge phases (.review.started / .review.finished /
+;;     .merge.started / .merge.completed), and wave.<name>.model.<bead id>,
+;;     written by the `wave' script (bin/wave in this repo);
 ;;   - merges: `git log --first-parent --merges' subjects naming bead ids;
 ;;   - fallback deploy for waves with no kv record: "Deployed ... (trunk SHA"
 ;;     close reasons, timed by the latest close (shown with ~).
@@ -120,7 +122,27 @@ up when this file loads rather than as a broken buffer."
                (:copier nil))
   "One wave: its recorded facts and what the data says happened."
   name title dispatched deployed deployed-approx sha
+  review-started review-finished findings fixed
+  merge-started merge-completed merge-sha
   beads merges opened state start end requeued models)
+
+(defconst waves-dashboard--states
+  '((shipped   "🚀" "[deployed]"  "shipped")
+    (merged    "📦" "[merged]"    "merged")
+    (merging   "🔀" "[merging]"   "merging")
+    (reviewed  "📝" "[reviewed]"  "reviewed")
+    (in-review "🔍" "[in review]" "in review")
+    (done      "✅" "[closed]"    "done")
+    (in-flight "🚧" "[in flight]" "in flight")
+    (queued    "📋" "[queued]"    "queued"))
+  "Wave states in precedence order, as (STATE EMOJI TEXT TOTALS-LABEL).
+EMOJI and TEXT are the header icons (\\`e' switches between them),
+TOTALS-LABEL names the state in the totals header.")
+
+(defconst waves-dashboard--active-states '(queued in-flight in-review reviewed merging)
+  "States of a wave that has not finished: not merged, done or shipped.
+An open bead that also carries the label of a later wave in one of
+these states has moved on to that wave.")
 
 (defun waves-dashboard--time (s)
   "Return ISO-8601 string S as a float time, or nil."
@@ -178,7 +200,9 @@ ids before the colon: other merges into trunk merely mention beads."
           (t (string< a b)))))
 
 (defun waves-dashboard--apply-kv (wave key value)
-  "Store the kv fact KEY (title, dispatched, deployed) with VALUE on WAVE."
+  "Store the kv fact KEY with VALUE on WAVE.
+KEY is title, dispatched, deployed, review.started, review.finished,
+merge.started or merge.completed."
   (pcase key
     ("title" (setf (waves-dashboard-wave-title wave) value))
     ("dispatched"
@@ -188,7 +212,28 @@ ids before the colon: other merges into trunk merely mention beads."
      (let ((parts (split-string value " " t)))
        (setf (waves-dashboard-wave-deployed wave)
              (waves-dashboard--time (car parts))
-             (waves-dashboard-wave-sha wave) (cadr parts))))))
+             (waves-dashboard-wave-sha wave) (cadr parts))))
+    ("review.started"
+     (setf (waves-dashboard-wave-review-started wave)
+           (waves-dashboard--time (car (split-string value " " t)))))
+    ("review.finished"
+     (let ((parts (split-string value " " t)))
+       (setf (waves-dashboard-wave-review-finished wave)
+             (waves-dashboard--time (car parts)))
+       (dolist (p (cdr parts))
+         (when (string-match "\\`\\(findings\\|fixed\\)=\\([0-9]+\\)\\'" p)
+           (let ((n (string-to-number (match-string 2 p))))
+             (if (equal (match-string 1 p) "findings")
+                 (setf (waves-dashboard-wave-findings wave) n)
+               (setf (waves-dashboard-wave-fixed wave) n)))))))
+    ("merge.started"
+     (setf (waves-dashboard-wave-merge-started wave)
+           (waves-dashboard--time (car (split-string value " " t)))))
+    ("merge.completed"
+     (let ((parts (split-string value " " t)))
+       (setf (waves-dashboard-wave-merge-completed wave)
+             (waves-dashboard--time (car parts))
+             (waves-dashboard-wave-merge-sha wave) (cadr parts))))))
 
 (defun waves-dashboard--fallback-deploy (wave)
   "Infer WAVE's deploy from \"Deployed ...\" close reasons."
@@ -228,8 +273,13 @@ ids before the colon: other merges into trunk merely mention beads."
     (setf (waves-dashboard-wave-end wave)
           (or (waves-dashboard-wave-deployed wave)
               (and all-closed close-times (apply #'max close-times))))
+    ;; Most advanced first; keep in step with `waves-dashboard--states'.
     (setf (waves-dashboard-wave-state wave)
           (cond ((waves-dashboard-wave-deployed wave) 'shipped)
+                ((waves-dashboard-wave-merge-completed wave) 'merged)
+                ((waves-dashboard-wave-merge-started wave) 'merging)
+                ((waves-dashboard-wave-review-finished wave) 'reviewed)
+                ((waves-dashboard-wave-review-started wave) 'in-review)
                 (all-closed 'done)
                 ((or (waves-dashboard-wave-start wave)
                      (cl-some (lambda (s) (member s '("in_progress" "closed")))
@@ -296,7 +346,11 @@ Running and shipped waves come newest first, queued ones after."
         (let ((k (format "%s" (car pair))))
           (cond
            ((string-match
-             "\\`wave\\.\\(.+\\)\\.\\(title\\|dispatched\\|deployed\\)\\'" k)
+             (concat "\\`wave\\.\\(.+\\)\\."
+                     "\\(title\\|dispatched\\|deployed"
+                     "\\|review\\.started\\|review\\.finished"
+                     "\\|merge\\.started\\|merge\\.completed\\)\\'")
+             k)
             (waves-dashboard--apply-kv (wave (match-string 1 k))
                                        (match-string 2 k)
                                        (format "%s" (cdr pair))))
@@ -361,9 +415,10 @@ starts, or two unstarted waves, are ordered by name."
 (defun waves-dashboard--mark-requeued (waves)
   "Record on each of WAVES which of its open beads moved to a later wave.
 A bead is re-queued when it is not closed and also carries the label
-of a later wave that is queued or in flight.  Sets each wave's
-`requeued' slot to an alist of bead id . later wave name, naming the
-latest such wave."
+of a later wave that hasn't finished (see
+`waves-dashboard--active-states').  Sets each wave's `requeued' slot
+to an alist of bead id . later wave name, naming the latest such
+wave."
   (let ((by-name (make-hash-table :test 'equal)))
     (dolist (w waves) (puthash (waves-dashboard-wave-name w) w by-name))
     (dolist (w waves)
@@ -375,7 +430,7 @@ latest such wave."
                 (let ((other (gethash name by-name)))
                   (when (and other (not (eq other w))
                              (memq (waves-dashboard-wave-state other)
-                                   '(queued in-flight))
+                                   waves-dashboard--active-states)
                              (waves-dashboard--later-p w other)
                              (or (null target)
                                  (waves-dashboard--later-p target other)))
@@ -439,6 +494,17 @@ counts distinct merge commits."
 
 ;;; Events (time spine)
 
+(defun waves-dashboard--findings-text (w)
+  "Return wave W's review counts as text, e.g. \"3 findings, 2 fixed\".
+Nil when the review recorded neither count."
+  (let ((n (waves-dashboard-wave-findings w))
+        (f (waves-dashboard-wave-fixed w)))
+    (when (or n f)
+      (string-join
+       (delq nil (list (and n (format "%d finding%s" n (if (= n 1) "" "s")))
+                       (and f (format "%d fixed" f))))
+       ", "))))
+
 (defun waves-dashboard--events (waves)
   "Return the chronological event list for WAVES.
 Each event is a plist with :time :wave :kind :id and :text."
@@ -469,6 +535,16 @@ Each event is a plist with :time :wave :kind :id and :text."
                       :id (alist-get 'id b) :issue b
                       :text (alist-get 'title b))
                 events))
+        (dolist (p `((,(waves-dashboard-wave-review-started w) "review-started" "")
+                     (,(waves-dashboard-wave-review-finished w) "review-finished"
+                      ,(or (waves-dashboard--findings-text w) ""))
+                     (,(waves-dashboard-wave-merge-started w) "merge-started" "")
+                     (,(waves-dashboard-wave-merge-completed w) "merge-completed"
+                      ,(or (waves-dashboard-wave-merge-sha w) ""))))
+          (when (car p)
+            (push (list :time (nth 0 p) :wave name :kind (nth 1 p)
+                        :text (nth 2 p))
+                  events)))
         (when-let* ((t1 (waves-dashboard-wave-deployed w)))
           (push (list :time t1 :wave name
                       :kind (if (waves-dashboard-wave-deployed-approx w)
@@ -640,15 +716,12 @@ wrapping, continuation lines align under the title."
       row)))
 
 (defun waves-dashboard--state-icon (state)
-  "Return the header icon for wave STATE.
+  "Return the header icon for wave STATE, from `waves-dashboard--states'.
 Text names such as [deployed] replace the emoji when
-`waves-dashboard--emoji' is nil."
-  (if waves-dashboard--emoji
-      (pcase state
-        ('shipped "🚀") ('done "✅") ('in-flight "🚧") (_ "📋"))
-    (pcase state
-      ('shipped "[deployed]") ('done "[closed]")
-      ('in-flight "[in flight]") (_ "[queued]"))))
+`waves-dashboard--emoji' is nil.  An unknown state shows as queued."
+  (let ((row (or (assq state waves-dashboard--states)
+                 (assq 'queued waves-dashboard--states))))
+    (if waves-dashboard--emoji (nth 1 row) (nth 2 row))))
 
 (defun waves-dashboard--header-title (w)
   "Return the section header text for wave W."
@@ -663,9 +736,30 @@ Text names such as [deployed] replace the emoji when
                         (waves-dashboard-wave-deployed-approx w))
                        (if-let* ((sha (waves-dashboard-wave-sha w)))
                            (format " (%s)" sha) "")))
+              ('merged
+               (format " · merged %s%s"
+                       (waves-dashboard--fmt-time
+                        (waves-dashboard-wave-merge-completed w))
+                       (if-let* ((sha (waves-dashboard-wave-merge-sha w)))
+                           (format " (%s)" sha) "")))
+              ('merging
+               (format " · merging since %s"
+                       (waves-dashboard--fmt-time
+                        (waves-dashboard-wave-merge-started w))))
+              ('reviewed
+               (format " · reviewed %s%s"
+                       (waves-dashboard--fmt-time
+                        (waves-dashboard-wave-review-finished w))
+                       (if-let* ((counts (waves-dashboard--findings-text w)))
+                           (format " (%s)" counts) "")))
+              ('in-review
+               (format " · in review since %s"
+                       (waves-dashboard--fmt-time
+                        (waves-dashboard-wave-review-started w))))
               ('done " · all closed, no deploy")
               ('in-flight " · in flight")
-              (_ " · queued"))
+              ('queued " · queued")
+              (_ ""))
             (if (waves-dashboard--all-requeued-p w) " · re-queued" ""))))
 
 (defun waves-dashboard--default-collapsed (waves)
@@ -676,7 +770,7 @@ Text names such as [deployed] replace the emoji when
         ((guard (waves-dashboard--all-requeued-p w))
          (push (waves-dashboard-wave-name w) names))
         ('queued (push (waves-dashboard-wave-name w) names))
-        ((or 'shipped 'done)
+        ((or 'shipped 'merged 'done)
          (when (> (cl-incf shipped) waves-dashboard-expanded-shipped)
            (push (waves-dashboard-wave-name w) names)))))
     names))
@@ -734,6 +828,28 @@ list of vnodes, show when it is not folded."
   "Non-nil when every bead in BEADS is closed."
   (cl-every (lambda (b) (equal (alist-get 'status b) "closed")) beads))
 
+(defun waves-dashboard--phase-lines (w)
+  "Return one text line per review or merge phase recorded for wave W."
+  (cl-flet ((line (label started end-word ended extra)
+              (concat "    " label " started " (waves-dashboard--fmt-time started)
+                      (if ended
+                          (format " · %s %s" end-word
+                                  (waves-dashboard--fmt-time ended))
+                        "")
+                      (if extra (format " · %s" extra) ""))))
+    (delq nil
+          (list
+           (when (or (waves-dashboard-wave-review-started w)
+                     (waves-dashboard-wave-review-finished w))
+             (line "Review" (waves-dashboard-wave-review-started w)
+                   "finished" (waves-dashboard-wave-review-finished w)
+                   (waves-dashboard--findings-text w)))
+           (when (or (waves-dashboard-wave-merge-started w)
+                     (waves-dashboard-wave-merge-completed w))
+             (line "Merge" (waves-dashboard-wave-merge-started w)
+                   "completed" (waves-dashboard-wave-merge-completed w)
+                   (waves-dashboard-wave-merge-sha w)))))))
+
 (defun waves-dashboard--wave-vnode (w collapsed-p on-toggle fold)
   "Return the section vnode for wave W.
 COLLAPSED-P folds it; ON-TOGGLE is the header click callback.  FOLD
@@ -754,6 +870,11 @@ beads."
       collapsed-p (length beads) on-toggle)
      (unless collapsed-p
        (list
+        (when-let* ((lines (waves-dashboard--phase-lines w)))
+          (apply #'vui-vstack
+                 (mapcar (lambda (l) (vui-text (waves-dashboard--hang l 4)
+                                               :face 'waves-dashboard-detail))
+                         lines)))
         (waves-dashboard--subsection
          (format "%s (%d)"
                  (cond ((waves-dashboard-wave-dispatched w)
@@ -811,7 +932,7 @@ beads."
 
 (defun waves-dashboard--event-vnode (e)
   "Return the time-spine line for event E."
-  (let* ((head (format "  %s  %-10s %-10s %-14s "
+  (let* ((head (format "  %s  %-10s %-15s %-14s "
                        (format-time-string "%H:%M" (plist-get e :time))
                        (concat "wave-" (plist-get e :wave))
                        (plist-get e :kind)
@@ -849,10 +970,7 @@ BY-PRIORITY adds a row per category broken down by priority."
   (let* ((ws (plist-get totals :waves))
          (states (mapconcat
                   #'identity
-                  (cl-loop for (s . label) in '((shipped . "shipped")
-                                                (done . "done")
-                                                (in-flight . "in flight")
-                                                (queued . "queued"))
+                  (cl-loop for (s _ _ label) in waves-dashboard--states
                            for n = (alist-get s ws)
                            when n collect (format "%d %s" n label))
                   ", "))
