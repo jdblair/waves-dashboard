@@ -153,9 +153,15 @@ wave review done <name> --findings N --fixed M             # its fixes are in, s
 wave merge start <name>                                    # before committing the wave
 wave merge done <name>                                     # right after the commit
 wave deployed <name>                                       # right after the push/deploy
+wave tokens <name> <id> <count> [--add]                    # as each agent finishes
 wave plan <name> --title "…" <ids...>                      # plan ahead, don't start
 ```
 
+- **Tokens.** When a bead's agent finishes, record the `total_tokens` from
+  its task notification: `wave tokens <name> <id> <count>`. Use `--add` for
+  a retry, an escalation or a fix round sent back to the same bead, so the
+  count is the bead's whole cost. The dashboard shows tokens on `$`. Record
+  the reviewer under the id `review` (`wave tokens <name> review <count>`).
 - **Review and merge phases.** Call `wave review start` when you spawn the
   reviewer, and `wave review done --findings N --fixed M` once its fixes are
   in and the suites pass (N: findings it reported, M: how many you fixed).

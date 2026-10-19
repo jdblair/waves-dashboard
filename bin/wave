@@ -18,6 +18,8 @@ bd kv so that no bead's updated_at is bumped:
   wave.<name>.modelsrc.<id>  `chosen` (model passed to the agent) or
                           `inherited` (none passed: the session's model);
                           absent on records from before this key existed
+  wave.<name>.tokens.<id>  total tokens the agent(s) for bead <id> spent,
+                          an integer (retries summed with --add)
 
 <name> is the label suffix: wave-12 -> 12, wave-k3x -> k3x.
 
@@ -45,6 +47,11 @@ Usage:
                                              record the model a bead's agent used;
                                              --inherited when the Agent call passed
                                              no model, so <model> is the session's
+  wave tokens <name> <id> <count> [--add]
+                                             record the tokens a bead's agent spent
+                                             (the total_tokens of its task
+                                             notification); --add sums onto the
+                                             recorded count, for a retry or fix round
   wave show [<name>]                         print the recorded facts
 
 Writes stay in the Dolt working set (auto-commit is off by default); commit
@@ -224,6 +231,19 @@ def cmd_model(a):
     print(f"wave {a.name}: {a.id} on {a.model} ({src})")
 
 
+def cmd_tokens(a):
+    key = f"wave.{a.name}.tokens.{a.id}"
+    n = a.count
+    if a.add:
+        old = kv_all().get(key)
+        try:
+            n += int(old or 0)
+        except ValueError:
+            sys.exit(f"wave: {key} holds {old!r}, not a count; record it again without --add")
+    bd("kv", "set", key, str(n))
+    print(f"wave {a.name}: {a.id} spent {n} tokens")
+
+
 def cmd_show(a):
     kv = kv_all()
     rows = {}
@@ -294,6 +314,14 @@ def main():
     s.add_argument("--inherited", action="store_true",
                    help="no model was passed to the agent; MODEL is the session's")
     s.set_defaults(fn=cmd_model)
+
+    s = sub.add_parser("tokens")
+    s.add_argument("name", type=check_name)
+    s.add_argument("id")
+    s.add_argument("count", type=count)
+    s.add_argument("--add", action="store_true",
+                   help="add COUNT to the recorded total instead of replacing it")
+    s.set_defaults(fn=cmd_tokens)
 
     s = sub.add_parser("show")
     s.add_argument("name", nargs="?", type=check_name)

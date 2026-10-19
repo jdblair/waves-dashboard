@@ -21,14 +21,16 @@
 ;; `M-x waves-dashboard' shows the bead-waves activity of the project at
 ;; `default-directory' (with \\[universal-argument], of a project you pick):
 ;; one collapsible section per wave with its beads, trunk merges, deploy and
-;; the beads opened while it ran, plus the queued waves.  `t' toggles to a
+;; the beads opened while it ran, plus the queued waves.  `$' shows the
+;; tokens recorded per bead and wave.  `t' toggles to a
 ;; chronological time spine.
 ;;
 ;; Data, all read-only:
 ;;   - membership: `wave-<name>' bead labels;
 ;;   - wave facts: bd kv keys wave.<name>.title / .dispatched / .deployed,
 ;;     the review and merge phases (.review.started / .review.finished /
-;;     .merge.started / .merge.completed), and wave.<name>.model.<bead id>,
+;;     .merge.started / .merge.completed), wave.<name>.model.<bead id> and
+;;     wave.<name>.tokens.<bead id>,
 ;;     written by the `wave' script (bin/wave in this repo);
 ;;   - merges: `git log --first-parent --merges' subjects naming bead ids;
 ;;   - fallback deploy for waves with no kv record: "Deployed ... (trunk SHA"
@@ -124,7 +126,7 @@ up when this file loads rather than as a broken buffer."
   name title dispatched deployed deployed-approx sha
   review-started review-finished findings fixed
   merge-started merge-completed merge-sha
-  beads merges opened state start end requeued models)
+  beads merges opened state start end requeued models tokens)
 
 (defconst waves-dashboard--states
   '((shipped   "🚀" "[deployed]"  "shipped")
@@ -325,6 +327,12 @@ WAVE-OF maps bead ids to wave names.  NOW ends open windows."
       (setf (waves-dashboard-wave-opened w)
             (nreverse (waves-dashboard-wave-opened w))))))
 
+(defun waves-dashboard--fmt-tokens (n)
+  "Format token count N compactly: 950, 67k, 1.2M."
+  (cond ((< n 1000) (format "%d" n))
+        ((< n 999500) (format "%dk" (round n 1000)))
+        (t (format "%.1fM" (/ n 1e6)))))
+
 (defun waves-dashboard--model (issues kv merges created &optional now)
   "Build the list of waves from bd and git data.
 ISSUES are wave-labelled beads, KV the bd kv alist, MERGES parsed
@@ -356,7 +364,12 @@ Running and shipped waves come newest first, queued ones after."
                                        (format "%s" (cdr pair))))
            ((string-match "\\`wave\\.\\(.+?\\)\\.model\\.\\(.+\\)\\'" k)
             (push (cons (match-string 2 k) (format "%s" (cdr pair)))
-                  (waves-dashboard-wave-models (wave (match-string 1 k))))))))
+                  (waves-dashboard-wave-models (wave (match-string 1 k)))))
+           ((string-match "\\`wave\\.\\(.+?\\)\\.tokens\\.\\(.+\\)\\'" k)
+            (let ((n (format "%s" (cdr pair))))
+              (when (string-match-p "\\`[0-9]+\\'" n)
+                (push (cons (match-string 2 k) (string-to-number n))
+                      (waves-dashboard-wave-tokens (wave (match-string 1 k))))))))))
       (dolist (m merges)
         (let* ((ids (waves-dashboard--subject-ids (plist-get m :subject)
                                                   wave-of))
@@ -451,6 +464,59 @@ At least one has to be re-queued."
                    (waves-dashboard-wave-beads w)))))
 
 ;;; Totals
+
+(defun waves-dashboard--wave-token-sum (w)
+  "Return (TOTAL . REVIEW) tokens recorded for wave W, or nil if none.
+TOTAL includes the reviewer, recorded under the id `review'."
+  (when-let* ((tokens (waves-dashboard-wave-tokens w)))
+    (cons (apply #'+ (mapcar #'cdr tokens))
+          (cdr (assoc "review" tokens)))))
+
+(defun waves-dashboard--wave-tokens-text (w)
+  "Return the token suffix for wave W's beads heading, or nil if none."
+  (when-let* ((sum (waves-dashboard--wave-token-sum w)))
+    (format " · %s tokens%s"
+            (waves-dashboard--fmt-tokens (car sum))
+            (if (cdr sum)
+                (format " (review %s)" (waves-dashboard--fmt-tokens (cdr sum)))
+              ""))))
+
+(defun waves-dashboard--tokens-lines (waves)
+  "Return the token header lines for WAVES: the overall total, then
+the waves with tokens recorded, newest first."
+  (let* ((sums (cl-loop for w in waves
+                        for sum = (waves-dashboard--wave-token-sum w)
+                        when sum collect (cons w sum)))
+         (beads (cl-loop for (w . _) in sums
+                         sum (cl-count-if-not (lambda (p) (equal (car p) "review"))
+                                              (waves-dashboard-wave-tokens w)))))
+    (if (null sums)
+        (list "  Tokens  none recorded (wave tokens <wave> <id> <count>)")
+      (cons
+       (format "  Tokens  %s across %d waves · %d beads · %s per bead"
+               (waves-dashboard--fmt-tokens (apply #'+ (mapcar #'cadr sums)))
+               (length sums) beads
+               (if (> beads 0)
+                   (waves-dashboard--fmt-tokens
+                    (round (cl-loop for (w . _) in sums
+                                    sum (cl-loop for (id . n) in (waves-dashboard-wave-tokens w)
+                                                 unless (equal id "review") sum n))
+                           beads))
+                 "-"))
+       (cl-loop for (w total . review) in sums
+                collect (format "  %-8s%-12s%6s%s" "" (concat "wave-" (waves-dashboard-wave-name w))
+                                (waves-dashboard--fmt-tokens total)
+                                (if review
+                                    (format "  review %s" (waves-dashboard--fmt-tokens review))
+                                  "")))))))
+
+(defun waves-dashboard--tokens-vnode (waves on)
+  "Return the token header block for WAVES, or nil unless ON."
+  (when on
+    (apply #'vui-vstack
+           (mapcar (lambda (l) (vui-text (waves-dashboard--hang l 10)
+                                         :face 'waves-dashboard-totals))
+                   (waves-dashboard--tokens-lines waves)))))
 
 (defun waves-dashboard--totals (waves)
   "Return summary counts over WAVES as a plist.
@@ -649,6 +715,10 @@ takes over 20 s on a ~740-bead project where `bd list --all' takes 0.4."
 (defvar-local waves-dashboard--emoji t
   "Non-nil shows emoji wave-state icons, nil short text names.
 Mirrors the root component's `emoji' state for the render functions.")
+
+(defvar-local waves-dashboard--tokens nil
+  "Non-nil shows the token counts recorded with `wave tokens'.
+Mirrors the root component's `tokens' state for the render functions.")
 
 (defvar-local waves-dashboard--timer nil
   "Auto-refresh timer of this dashboard buffer, or nil when off.")
@@ -876,28 +946,39 @@ beads."
                                                :face 'waves-dashboard-detail))
                          lines)))
         (waves-dashboard--subsection
-         (format "%s (%d)"
-                 (cond ((waves-dashboard-wave-dispatched w)
-                        (format "Dispatched %s"
-                                (waves-dashboard--fmt-time
-                                 (waves-dashboard-wave-dispatched w))))
-                       ((waves-dashboard-wave-start w)
-                        (format "First merge %s (no dispatch recorded)"
-                                (waves-dashboard--fmt-time
-                                 (waves-dashboard-wave-start w))))
-                       (t "Beads"))
-                 (length beads))
+         (concat
+          (format "%s (%d)"
+                  (cond ((waves-dashboard-wave-dispatched w)
+                         (format "Dispatched %s"
+                                 (waves-dashboard--fmt-time
+                                  (waves-dashboard-wave-dispatched w))))
+                        ((waves-dashboard-wave-start w)
+                         (format "First merge %s (no dispatch recorded)"
+                                 (waves-dashboard--fmt-time
+                                  (waves-dashboard-wave-start w))))
+                        (t "Beads"))
+                  (length beads))
+          (and waves-dashboard--tokens (waves-dashboard--wave-tokens-text w)))
          'waves-dashboard-detail
          (funcall fold "beads" beads-closed)
          (if beads
              (let ((marks (waves-dashboard-wave-requeued w))
-                   (models (waves-dashboard-wave-models w)))
+                   (models (waves-dashboard-wave-models w))
+                   (tokens (waves-dashboard-wave-tokens w)))
                (mapcar (lambda (b)
                          (let* ((id (alist-get 'id b))
                                 (to (cdr (assoc id marks)))
                                 (model (cdr (assoc id models)))
+                                (spent (cdr (assoc id tokens)))
+                                (tag (string-join
+                                      (delq nil (list model
+                                                      (and spent waves-dashboard--tokens
+                                                           (waves-dashboard--fmt-tokens
+                                                            spent))))
+                                      " "))
                                 (suffix (concat
-                                         (and model (format "  [%s]" model))
+                                         (and (not (string-empty-p tag))
+                                              (format "  [%s]" tag))
                                          (and to (format "  → wave-%s" to)))))
                            (waves-dashboard--issue-row
                             b (and (not (string-empty-p suffix)) suffix) to)))
@@ -1016,17 +1097,18 @@ MODE is nil, `totals' or `priority'."
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
   (vui-text (waves-dashboard--hang
-             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
+             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · $ tokens · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
              6)
             :face 'waves-dashboard-detail))
 
 (vui-defcomponent waves-dashboard--root-component (project-root)
   "Root of the waves dashboard for PROJECT-ROOT."
   :state ((generation 0) (view 'waves) (collapsed nil) (totals nil)
-           (emoji t))
+           (emoji t) (tokens nil))
   :render
   (let* ((buffer (current-buffer))
-         (_ (setq waves-dashboard--emoji emoji))
+         (_ (setq waves-dashboard--emoji emoji
+                  waves-dashboard--tokens tokens))
          (async (vui-use-async (list 'waves project-root generation)
                   (lambda (resolve reject)
                     (waves-dashboard--collect project-root resolve reject))))
@@ -1047,6 +1129,7 @@ MODE is nil, `totals' or `priority'."
      :spacing 1
      header
      (when waves (waves-dashboard--totals-vnode waves totals))
+     (when waves (waves-dashboard--tokens-vnode waves tokens))
      (cond
       ((eq status 'error)
        (beads-dashboard--error-line (plist-get async :error)))
@@ -1109,6 +1192,13 @@ Works with vui before and after `vui--buffer-root' existed."
    :totals
    (pcase (plist-get (vui-instance-state (waves-dashboard--root)) :totals)
      ('nil 'totals) ('totals 'priority) (_ nil))))
+
+(defun waves-dashboard-toggle-tokens ()
+  "Toggle the token counts: a header, per-wave totals and per-bead counts."
+  (interactive)
+  (beads-dashboard--bump
+   :tokens
+   (not (plist-get (vui-instance-state (waves-dashboard--root)) :tokens))))
 
 (defun waves-dashboard-toggle-emoji ()
   "Toggle the wave-state icons between emoji and short text names."
@@ -1202,6 +1292,7 @@ every subsection, or `default' to leave subsections at their defaults."
   "g" #'waves-dashboard-refresh
   "t" #'waves-dashboard-toggle-view
   "T" #'waves-dashboard-cycle-totals
+  "$" #'waves-dashboard-toggle-tokens
   "e" #'waves-dashboard-toggle-emoji
   "C" #'waves-dashboard-collapse-all
   "E" #'waves-dashboard-expand-all

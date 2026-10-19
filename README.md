@@ -8,7 +8,7 @@ Three parts, meant to be used together:
 
 | Part | Path | What it does |
 |------|------|--------------|
-| `wave` CLI | `bin/wave` | Records wave facts in the project's beads: labels member beads `wave-<name>`, and writes `bd kv` keys `wave.<name>.title`, `.dispatched`, `.deployed`, the review and merge phases (`.review.started`, `.review.finished`, `.merge.started`, `.merge.completed`), `.model.<bead id>`, and `.modelsrc.<bead id>` (`chosen`, or `inherited` when no model was passed to the agent). kv touches no bead, so no `updated_at` is bumped. |
+| `wave` CLI | `bin/wave` | Records wave facts in the project's beads: labels member beads `wave-<name>`, and writes `bd kv` keys `wave.<name>.title`, `.dispatched`, `.deployed`, the review and merge phases (`.review.started`, `.review.finished`, `.merge.started`, `.merge.completed`), `.model.<bead id>`, `.modelsrc.<bead id>` (`chosen`, or `inherited` when no model was passed to the agent), and `.tokens.<bead id>` (tokens the bead's agents spent, shown with the `$` toggle). kv touches no bead, so no `updated_at` is bumped. |
 | waves-dashboard | `waves-dashboard.el` | `M-x waves-dashboard`: an Emacs view of a project's waves (beads, trunk merges, deploy, beads opened while each ran), or a chronological time spine (`t`). Read-only. |
 | bead-waves skill | `skill/bead-waves/SKILL.md` | The Claude Code skill that runs waves and calls `wave` to record them. |
 
@@ -144,7 +144,7 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 `M-x waves-dashboard-new-window` does the same in the window beside the current one
 (right, below, left, then above; it splits when the window is alone).
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
-the totals header (off, totals, totals by priority), `C` collapses and `E` expands all waves (`E` leaves each wave's
+the totals header (off, totals, totals by priority), `$` toggles token counts (a header with the total and each wave's, a total on each wave's beads heading, and each bead's count beside its model), `C` collapses and `E` expands all waves (`E` leaves each wave's
 subsections at their defaults), and `1`/`2`/`3` set a fold level: wave
 headers only, waves open with subsections folded, everything open. `e` swaps the
 emoji state icons for text names (`[deployed]`, `[merged]`, `[merging]`,

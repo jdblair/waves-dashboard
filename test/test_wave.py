@@ -169,6 +169,24 @@ class WaveTest(unittest.TestCase):
         ])
         self.assertEqual(self.wave("show", "13").stdout.splitlines(), out[3:])
 
+    def test_tokens_set_then_add(self):
+        self.wave("tokens", "12", "demo-a", "67000")
+        self.assertEqual(self.kv(), {"wave.12.tokens.demo-a": "67000"})
+        self.wave("tokens", "wave-12", "demo-a", "1500", "--add")
+        self.assertEqual(self.kv()["wave.12.tokens.demo-a"], "68500")
+        self.wave("tokens", "12", "demo-a", "100")
+        self.assertEqual(self.kv()["wave.12.tokens.demo-a"], "100")
+
+    def test_tokens_add_with_nothing_recorded_starts_at_zero(self):
+        self.wave("tokens", "12", "demo-b", "42", "--add")
+        self.assertEqual(self.kv(), {"wave.12.tokens.demo-b": "42"})
+
+    def test_tokens_refuses_negative_and_garbage(self):
+        r = self.wave("tokens", "12", "demo-a", "-5", ok=False)
+        self.assertIn("must be 0 or more", r.stderr)
+        self.wave("tokens", "12", "demo-a", "12k", ok=False)
+        self.assertEqual(self.kv(), {})
+
     def test_phases_write_only_kv(self):
         self.wave("review", "start", "12")
         self.wave("review", "done", "12")
