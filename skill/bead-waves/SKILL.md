@@ -45,6 +45,15 @@ Pick a model per bead when you spawn its agent (the Agent tool's `model`).
   re-queued on the stronger model.
 - **The reviewer is always the stronger model**, or a cheap model's mistakes
   go unseen.
+- **Choose for every bead, every wave** (owner, 2026-10-19). Many beads are
+  `sonnet` work; running everything on the strongest model wastes the
+  owner's usage. Say in the wave's picks which bead got which model.
+- **Second opinions from other models.** The owner's model API proxy (the
+  host in `ANTHROPIC_BASE_URL`) may serve models beyond the Agent tool's
+  list. Use them for reviews and critiques where a differently trained
+  reader helps: a second review of a risky wave, a critique of a design
+  note or plan. Check what the proxy offers before relying on one, and
+  never let a second opinion replace the primary review.
 
 Always pass `model` explicitly: an agent spawned without one inherits the
 session's model, so a session left on `sonnet` would silently run every bead
