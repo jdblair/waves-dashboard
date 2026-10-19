@@ -463,6 +463,38 @@ At least one has to be re-queued."
                          (assoc (alist-get 'id b) marks)))
                    (waves-dashboard-wave-beads w)))))
 
+;;; Bead sort
+
+(defconst waves-dashboard--sort-keys
+  '(priority id type status title model tokens)
+  "Bead sort keys in the order `s' cycles through them.")
+
+(defun waves-dashboard--sort-value (w b key)
+  "Return bead B's sort value in wave W for KEY: a number or a string."
+  (let ((id (alist-get 'id b)))
+    (pcase key
+      ('priority (or (alist-get 'priority b) 9))
+      ('id (or id ""))
+      ('type (or (alist-get 'issue_type b) ""))
+      ('status (or (alist-get 'status b) ""))
+      ('title (downcase (or (alist-get 'title b) "")))
+      ('model (or (cdr (assoc id (waves-dashboard-wave-models w))) "~"))
+      ('tokens (or (cdr (assoc id (waves-dashboard-wave-tokens w))) -1)))))
+
+(defun waves-dashboard--sorted-beads (w key reverse)
+  "Return wave W's beads sorted by KEY (nil keeps the model's order),
+REVERSE flipping it.  Ties fall back to the model's order (priority,
+then id), so the result is stable."
+  (let ((beads (copy-sequence (waves-dashboard-wave-beads w))))
+    (when key
+      (setq beads
+            (seq-sort-by
+             #'car
+             (lambda (a b) (if (numberp a) (< a b) (string< a b)))
+             (cl-loop for b in beads collect (cons (waves-dashboard--sort-value w b key) b))))
+      (setq beads (mapcar #'cdr beads)))
+    (if reverse (nreverse beads) beads)))
+
 ;;; Totals
 
 (defun waves-dashboard--wave-token-sum (w)
@@ -720,6 +752,13 @@ Mirrors the root component's `emoji' state for the render functions.")
   "Non-nil shows the token counts recorded with `wave tokens'.
 Mirrors the root component's `tokens' state for the render functions.")
 
+(defvar-local waves-dashboard--sort nil
+  "Bead sort within each wave: nil (priority, then id) or a key of
+`waves-dashboard--sort-keys'.  Mirrors the root component's `sort' state.")
+
+(defvar-local waves-dashboard--sort-reverse nil
+  "Non-nil reverses the bead sort.  Mirrors the root's `sort-reverse' state.")
+
 (defvar-local waves-dashboard--timer nil
   "Auto-refresh timer of this dashboard buffer, or nil when off.")
 
@@ -958,11 +997,16 @@ beads."
                                   (waves-dashboard-wave-start w))))
                         (t "Beads"))
                   (length beads))
-          (and waves-dashboard--tokens (waves-dashboard--wave-tokens-text w)))
+          (and waves-dashboard--tokens (waves-dashboard--wave-tokens-text w))
+          (and (or waves-dashboard--sort waves-dashboard--sort-reverse)
+               (format " · by %s%s" (or waves-dashboard--sort 'priority)
+                       (if waves-dashboard--sort-reverse " ↓" ""))))
          'waves-dashboard-detail
          (funcall fold "beads" beads-closed)
          (if beads
              (let ((marks (waves-dashboard-wave-requeued w))
+                   (beads (waves-dashboard--sorted-beads
+                           w waves-dashboard--sort waves-dashboard--sort-reverse))
                    (models (waves-dashboard-wave-models w))
                    (tokens (waves-dashboard-wave-tokens w)))
                (mapcar (lambda (b)
@@ -1097,18 +1141,20 @@ MODE is nil, `totals' or `priority'."
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
   (vui-text (waves-dashboard--hang
-             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · $ tokens · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
+             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · $ tokens · s/S sort/reverse · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
              6)
             :face 'waves-dashboard-detail))
 
 (vui-defcomponent waves-dashboard--root-component (project-root)
   "Root of the waves dashboard for PROJECT-ROOT."
   :state ((generation 0) (view 'waves) (collapsed nil) (totals nil)
-           (emoji t) (tokens nil))
+           (emoji t) (tokens nil) (sort nil) (sort-reverse nil))
   :render
   (let* ((buffer (current-buffer))
          (_ (setq waves-dashboard--emoji emoji
-                  waves-dashboard--tokens tokens))
+                  waves-dashboard--tokens tokens
+                  waves-dashboard--sort sort
+                  waves-dashboard--sort-reverse sort-reverse))
          (async (vui-use-async (list 'waves project-root generation)
                   (lambda (resolve reject)
                     (waves-dashboard--collect project-root resolve reject))))
@@ -1199,6 +1245,22 @@ Works with vui before and after `vui--buffer-root' existed."
   (beads-dashboard--bump
    :tokens
    (not (plist-get (vui-instance-state (waves-dashboard--root)) :tokens))))
+
+(defun waves-dashboard-cycle-sort ()
+  "Cycle the bead sort within each wave through `waves-dashboard--sort-keys'."
+  (interactive)
+  (let* ((cur (or (plist-get (vui-instance-state (waves-dashboard--root)) :sort) 'priority))
+         (next (or (cadr (memq cur waves-dashboard--sort-keys))
+                   (car waves-dashboard--sort-keys))))
+    (beads-dashboard--bump :sort (unless (eq next 'priority) next))
+    (message "Beads sorted by %s" next)))
+
+(defun waves-dashboard-reverse-sort ()
+  "Reverse the bead sort within each wave."
+  (interactive)
+  (beads-dashboard--bump
+   :sort-reverse
+   (not (plist-get (vui-instance-state (waves-dashboard--root)) :sort-reverse))))
 
 (defun waves-dashboard-toggle-emoji ()
   "Toggle the wave-state icons between emoji and short text names."
@@ -1293,6 +1355,8 @@ every subsection, or `default' to leave subsections at their defaults."
   "t" #'waves-dashboard-toggle-view
   "T" #'waves-dashboard-cycle-totals
   "$" #'waves-dashboard-toggle-tokens
+  "s" #'waves-dashboard-cycle-sort
+  "S" #'waves-dashboard-reverse-sort
   "e" #'waves-dashboard-toggle-emoji
   "C" #'waves-dashboard-collapse-all
   "E" #'waves-dashboard-expand-all

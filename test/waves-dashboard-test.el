@@ -360,6 +360,32 @@ EXTRA-BEADS are added as they are."
     (should (equal (waves-dashboard--tokens-lines (wdt--model))
                    '("  Tokens  none recorded (wave tokens <wave> <id> <count>)")))))
 
+(ert-deftest waves-dashboard-sorted-beads ()
+  (let* ((waves (wdt--model '(("wave.6.tokens.demo-r8tq" . "500")
+                              ("wave.6.model.demo-r8tq" . "sonnet"))))
+         (w (wdt--wave "6" waves))
+         (ids (lambda (key rev)
+                (mapcar (lambda (b) (alist-get 'id b))
+                        (waves-dashboard--sorted-beads w key rev))))
+         (model-order (mapcar (lambda (b) (alist-get 'id b))
+                              (waves-dashboard-wave-beads w))))
+    (should (> (length model-order) 1))
+    (should (equal (funcall ids nil nil) model-order))
+    (should (equal (funcall ids nil t) (reverse model-order)))
+    (should (equal (funcall ids 'id nil) (sort (copy-sequence model-order) #'string<)))
+    ;; the one bead with tokens sorts last ascending, first reversed
+    (should (equal (car (last (funcall ids 'tokens nil))) "demo-r8tq"))
+    (should (equal (car (funcall ids 'tokens t)) "demo-r8tq"))
+    (should (equal (car (funcall ids 'model nil)) "demo-r8tq"))
+    ;; the model's own list is never reordered
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (waves-dashboard-wave-beads w))
+                   model-order))
+    (with-temp-buffer
+      (setq waves-dashboard--sort 'id waves-dashboard--sort-reverse t)
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          w nil #'ignore (lambda (_ d) (cons nil #'ignore))))
+      (should (string-search "· by id ↓" (buffer-string))))))
+
 (ert-deftest waves-dashboard-fmt-tokens ()
   (should (equal (waves-dashboard--fmt-tokens 950) "950"))
   (should (equal (waves-dashboard--fmt-tokens 67400) "67k"))

@@ -144,7 +144,7 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 `M-x waves-dashboard-new-window` does the same in the window beside the current one
 (right, below, left, then above; it splits when the window is alone).
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
-the totals header (off, totals, totals by priority), `$` toggles token counts (a header with the total and each wave's, a total on each wave's beads heading, and each bead's count beside its model), `C` collapses and `E` expands all waves (`E` leaves each wave's
+the totals header (off, totals, totals by priority), `s` cycles the bead sort within each wave (priority, id, type, status, title, model, tokens) and `S` reverses it, `$` toggles token counts (a header with the total and each wave's, a total on each wave's beads heading, and each bead's count beside its model), `C` collapses and `E` expands all waves (`E` leaves each wave's
 subsections at their defaults), and `1`/`2`/`3` set a fold level: wave
 headers only, waves open with subsections folded, everything open. `e` swaps the
 emoji state icons for text names (`[deployed]`, `[merged]`, `[merging]`,
