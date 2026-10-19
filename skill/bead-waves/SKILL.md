@@ -44,14 +44,17 @@ Pick a model per bead when you spawn its agent (the Agent tool's `model`).
 - **Escalate:** a cheap-model bead that fails review or its tests is
   re-queued on the stronger model.
 - **The reviewer is always the stronger model**, or a cheap model's mistakes
-  go unseen.
+  go unseen. **Cost cap (owner, 2026-10-19): a reviewer, primary or second
+  opinion, costs no more than Opus 5.5** (`opus`, `sonnet`, `haiku`). Never
+  pass a pricier model such as `fable` for a review, even when it is the
+  session's model; pass `opus` explicitly.
 - **Choose for every bead, every wave** (owner, 2026-10-19). Many beads are
   `sonnet` work; running everything on the strongest model wastes the
   owner's usage. Say in the wave's picks which bead got which model.
 - **Second opinions.** Where other models are available, use them for
   reviews and critiques where a differently trained reader helps: a second
   review of a risky wave, a critique of a design note or plan. Never let a
-  second opinion replace the primary review.
+  second opinion replace the primary review. The same cost cap applies.
 
 Always pass `model` explicitly: an agent spawned without one inherits the
 session's model, so a session left on `sonnet` would silently run every bead
