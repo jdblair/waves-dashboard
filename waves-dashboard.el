@@ -22,7 +22,7 @@
 ;; `default-directory' (with \\[universal-argument], of a project you pick):
 ;; one collapsible section per wave with its beads, trunk merges, deploy and
 ;; the beads opened while it ran, plus the queued waves.  `$' adds the
-;; token totals (grand total and per wave); per-bead and review counts always show.  `t' toggles to a
+;; token counts: per bead and review, the grand total and each wave's.  `t' toggles to a
 ;; chronological time spine.
 ;;
 ;; Data, all read-only:
@@ -495,6 +495,43 @@ then id), so the result is stable."
       (setq beads (mapcar #'cdr beads)))
     (if reverse (nreverse beads) beads)))
 
+;;; Wave sort
+
+(defconst waves-dashboard--wave-sort-keys '(default lexical created start)
+  "Wave sort keys in the order `w' cycles through them.
+`default' is the model's order: started waves newest first, then queued.")
+
+(defun waves-dashboard--wave-created (w)
+  "Return the creation time of wave W: its earliest bead's, or nil."
+  (let ((times (delq nil (mapcar (lambda (b)
+                                   (waves-dashboard--time
+                                    (alist-get 'created_at b)))
+                                 (waves-dashboard-wave-beads w)))))
+    (and times (apply #'min times))))
+
+(defun waves-dashboard--sorted-waves (waves key reverse)
+  "Return WAVES sorted by KEY (`default' keeps the order), REVERSE flipping it.
+Waves lacking the time KEY sorts by stay after the others, by name,
+whichever way REVERSE points."
+  (let ((name< (lambda (a b) (waves-dashboard--name<
+                              (waves-dashboard-wave-name a)
+                              (waves-dashboard-wave-name b)))))
+    (if (memq key '(nil default))
+        (if reverse (reverse waves) waves)
+      (let* ((value (pcase key
+                      ('lexical #'waves-dashboard-wave-name)
+                      ('created #'waves-dashboard--wave-created)
+                      ('start #'waves-dashboard-wave-start)))
+             (known (cl-remove-if-not value waves))
+             (unknown (sort (copy-sequence (cl-remove-if value waves)) name<))
+             (known (sort (copy-sequence known)
+                          (lambda (a b)
+                            (let ((va (funcall value a)) (vb (funcall value b)))
+                              (cond ((eq key 'lexical) (funcall name< a b))
+                                    ((/= va vb) (< va vb))
+                                    (t (funcall name< a b))))))))
+        (append (if reverse (nreverse known) known) unknown)))))
+
 ;;; Totals
 
 (defun waves-dashboard--wave-token-sum (w)
@@ -510,9 +547,11 @@ TOTAL includes the reviewer, recorded under the id `review'."
     (concat " " (waves-dashboard--tag nil (car sum)))))
 
 (defun waves-dashboard--tag (model spent)
-  "Return \"[MODEL SPENT]\" (SPENT formatted), or nil when both are nil."
+  "Return \"[MODEL SPENT]\", or nil when both are nil.
+SPENT shows only while the token toggle is on."
   (let ((tag (string-join
-              (delq nil (list model (and spent (waves-dashboard--fmt-tokens spent))))
+              (delq nil (list model (and spent waves-dashboard--tokens
+                                         (waves-dashboard--fmt-tokens spent))))
               " ")))
     (unless (string-empty-p tag)
       (propertize (format "[%s]" tag) 'face 'waves-dashboard-totals))))
@@ -1155,14 +1194,15 @@ MODE is nil, `totals' or `priority'."
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
   (vui-text (waves-dashboard--hang
-             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · $ token totals · s/S sort/reverse · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
+             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · $ token totals · s/S sort beads/reverse · w/W sort waves/reverse · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
              6)
             :face 'waves-dashboard-detail))
 
 (vui-defcomponent waves-dashboard--root-component (project-root)
   "Root of the waves dashboard for PROJECT-ROOT."
   :state ((generation 0) (view 'waves) (collapsed nil) (totals nil)
-           (emoji t) (tokens nil) (sort nil) (sort-reverse nil))
+           (emoji t) (tokens nil) (sort nil) (sort-reverse nil)
+           (wave-sort 'default) (wave-sort-reverse nil))
   :render
   (let* ((buffer (current-buffer))
          (_ (setq waves-dashboard--emoji emoji
@@ -1183,6 +1223,11 @@ MODE is nil, `totals' or `priority'."
                               (directory-file-name project-root))
                              :face 'font-lock-constant-face)
                    (vui-text (concat (if (eq view 'spine) " · timeline" " · waves")
+                                     (and (eq view 'waves)
+                                          (or (not (eq wave-sort 'default))
+                                              wave-sort-reverse)
+                                          (format " · by %s%s" wave-sort
+                                                  (if wave-sort-reverse " ↓" "")))
                                      (if waves-dashboard--timer " · auto" ""))
                              :face 'shadow))))
     (vui-vstack
@@ -1213,7 +1258,8 @@ MODE is nil, `totals' or `priority'."
                       (lambda (sub default)
                         (waves-dashboard--fold
                          buffer (concat name "/" sub) collapsed default)))))
-                 waves)))))
+                 (waves-dashboard--sorted-waves
+                  waves wave-sort wave-sort-reverse))))))
      (waves-dashboard--footer))))
 
 ;;; Mode and commands
@@ -1275,6 +1321,23 @@ Works with vui before and after `vui--buffer-root' existed."
   (beads-dashboard--bump
    :sort-reverse
    (not (plist-get (vui-instance-state (waves-dashboard--root)) :sort-reverse))))
+
+(defun waves-dashboard-cycle-wave-sort ()
+  "Cycle the wave order through `waves-dashboard--wave-sort-keys'."
+  (interactive)
+  (let* ((cur (or (plist-get (vui-instance-state (waves-dashboard--root)) :wave-sort)
+                  'default))
+         (next (or (cadr (memq cur waves-dashboard--wave-sort-keys))
+                   (car waves-dashboard--wave-sort-keys))))
+    (beads-dashboard--bump :wave-sort next)
+    (message "Waves sorted by %s" next)))
+
+(defun waves-dashboard-reverse-wave-sort ()
+  "Reverse the wave order."
+  (interactive)
+  (beads-dashboard--bump
+   :wave-sort-reverse
+   (not (plist-get (vui-instance-state (waves-dashboard--root)) :wave-sort-reverse))))
 
 (defun waves-dashboard-toggle-emoji ()
   "Toggle the wave-state icons between emoji and short text names."
@@ -1371,6 +1434,8 @@ every subsection, or `default' to leave subsections at their defaults."
   "$" #'waves-dashboard-toggle-tokens
   "s" #'waves-dashboard-cycle-sort
   "S" #'waves-dashboard-reverse-sort
+  "w" #'waves-dashboard-cycle-wave-sort
+  "W" #'waves-dashboard-reverse-wave-sort
   "e" #'waves-dashboard-toggle-emoji
   "C" #'waves-dashboard-collapse-all
   "E" #'waves-dashboard-expand-all
