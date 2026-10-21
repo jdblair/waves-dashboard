@@ -82,9 +82,31 @@ git worktree add -b wip/<id> .claude/worktrees/<id> HEAD
 
 **The harness's `isolation: "worktree"` branches from a PUSHED commit**, so
 that agent wouldn't see this session's local commits. A worktree agent may
-run the suite and commit to its own branch; never push, never merge. You
-merge `--no-ff`, re-run the suite on the merged tree, then remove the
-worktree and sweep.
+run targeted tests (see Running tests) and commit to its own branch; never
+push, never merge. You merge `--no-ff`, run the full suite once on the final
+merged tree, then remove the worktree and sweep.
+
+## Running tests
+
+Suites cost minutes each and compete for the same database container, so
+plan who runs what (owner, 2026-10-21; one wave ran the full suite in every
+agent, again after each merge, again in review):
+
+- **Agents run targeted tests only:** the test files for the code they
+  touch, plus the dependents of any shared function or contract they change
+  (grep for importers and callers, and name them in the prompt). They also
+  run their own mutation checks. They do not run the full suite.
+- **The coordinator runs the full suite once, on the final merged tree**,
+  not after each branch merge. Run the ops or script suite only when `ops/`
+  or the scripts changed, and the UI suite (`npm test`, `npm run build`)
+  only when `ui/` changed. After review fixes: targeted tests in the fix
+  branch, then one full run after the merge.
+- **Reviewers do not run the suite.** Tell them it passes. They run only the
+  test files they mutate or use to reproduce a finding.
+- **The merged-tree run is the safety net** for cross-branch breakage, so
+  never skip it. An agent changing a shared contract (a signature, a load
+  field, a signal shape) must run the tests of every dependent it can find;
+  a green targeted run does not prove the contract held.
 
 ## Prompts
 
@@ -190,7 +212,8 @@ Record both phases (see Record the wave): `wave review start` /
 `wave review done` around the review, `wave merge start` /
 `wave merge done` around the commit.
 
-Tell the reviewer the suite passes, so it skips what tests already catch;
+Tell the reviewer the suite passes, so it skips what tests already catch
+(and tell it not to run the suite: targeted files for mutations only);
 name the riskiest invariant first; ask for CONFIRMED vs PLAUSIBLE; ask it
 to say plainly which commits are clean, and not to manufacture findings.
 
@@ -222,6 +245,15 @@ stale-looking name.
 4. Keep the main checkout's long-lived test resource.
 
 ## Harness traps
+
+**A symlink in a worktree can empty its target.** An agent that symlinks
+`ui/node_modules` (or any heavy directory) from the main checkout into its
+worktree puts the main copy at risk: `git worktree remove --force` followed
+the link and emptied the main checkout's `node_modules` (restored with
+`npm ci`). Before removing a worktree run `rm <worktree>/ui/node_modules`
+(no trailing slash, so only the link goes), and tell agents to do the same
+before they finish. For a deploy build, copy the built `ui/dist` into a
+clean worktree instead of linking `node_modules`.
 
 **Orphaned background waiters.** An agent that abandons a background run
 leaves an `until ...; do sleep N; done` shell polling a file nothing will
