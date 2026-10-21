@@ -21,8 +21,8 @@
 ;; `M-x waves-dashboard' shows the bead-waves activity of the project at
 ;; `default-directory' (with \\[universal-argument], of a project you pick):
 ;; one collapsible section per wave with its beads, trunk merges, deploy and
-;; the beads opened while it ran, plus the queued waves.  `$' shows the
-;; tokens recorded per bead and wave.  `t' toggles to a
+;; the beads opened while it ran, plus the queued waves.  `$' adds the
+;; token totals (grand total and per wave); per-bead and review counts always show.  `t' toggles to a
 ;; chronological time spine.
 ;;
 ;; Data, all read-only:
@@ -82,7 +82,7 @@ title, a merge's subject, an event's text.  Nil truncates lines."
 
 (defface waves-dashboard-totals
   '((t :inherit font-lock-function-name-face))
-  "Face for the totals header toggled with \\`T'.")
+  "Face for the totals header toggled with \\`T' and for token counts.")
 
 (defface waves-dashboard-detail
   '((t :inherit font-lock-type-face))
@@ -505,17 +505,20 @@ TOTAL includes the reviewer, recorded under the id `review'."
           (cdr (assoc "review" tokens)))))
 
 (defun waves-dashboard--wave-tokens-text (w)
-  "Return the token suffix for wave W's beads heading, or nil if none."
+  "Return the token total suffix for wave W's heading, or nil if none."
   (when-let* ((sum (waves-dashboard--wave-token-sum w)))
-    (format " · %s tokens%s"
-            (waves-dashboard--fmt-tokens (car sum))
-            (if (cdr sum)
-                (format " (review %s)" (waves-dashboard--fmt-tokens (cdr sum)))
-              ""))))
+    (concat " " (waves-dashboard--tag nil (car sum)))))
+
+(defun waves-dashboard--tag (model spent)
+  "Return \"[MODEL SPENT]\" (SPENT formatted), or nil when both are nil."
+  (let ((tag (string-join
+              (delq nil (list model (and spent (waves-dashboard--fmt-tokens spent))))
+              " ")))
+    (unless (string-empty-p tag)
+      (propertize (format "[%s]" tag) 'face 'waves-dashboard-totals))))
 
 (defun waves-dashboard--tokens-lines (waves)
-  "Return the token header lines for WAVES: the overall total, then
-the waves with tokens recorded, newest first."
+  "Return the token header line for WAVES: the overall total."
   (let* ((sums (cl-loop for w in waves
                         for sum = (waves-dashboard--wave-token-sum w)
                         when sum collect (cons w sum)))
@@ -524,7 +527,7 @@ the waves with tokens recorded, newest first."
                                               (waves-dashboard-wave-tokens w)))))
     (if (null sums)
         (list "  Tokens  none recorded (wave tokens <wave> <id> <count>)")
-      (cons
+      (list
        (format "  Tokens  %s across %d waves · %d beads · %s per bead"
                (waves-dashboard--fmt-tokens (apply #'+ (mapcar #'cadr sums)))
                (length sums) beads
@@ -534,13 +537,7 @@ the waves with tokens recorded, newest first."
                                     sum (cl-loop for (id . n) in (waves-dashboard-wave-tokens w)
                                                  unless (equal id "review") sum n))
                            beads))
-                 "-"))
-       (cl-loop for (w total . review) in sums
-                collect (format "  %-8s%-12s%6s%s" "" (concat "wave-" (waves-dashboard-wave-name w))
-                                (waves-dashboard--fmt-tokens total)
-                                (if review
-                                    (format "  review %s" (waves-dashboard--fmt-tokens review))
-                                  "")))))))
+                 "-"))))))
 
 (defun waves-dashboard--tokens-vnode (waves on)
   "Return the token header block for WAVES, or nil unless ON."
@@ -817,11 +814,22 @@ wrapping, continuation lines align under the title."
                       :on-click (lambda () (beads-show id))))
                 (beads-section--issue-line-vnode issue props))))
     (if suffix
-        (vui-hstack :spacing 0 row
-                    (apply #'vui-text suffix
-                           :face (if dim 'waves-dashboard-requeued
-                                   'waves-dashboard-detail)
-                           props))
+        (apply #'vui-hstack :spacing 0 row
+               ;; vui-text's :face overrides text properties, so each
+               ;; run with its own face (a token tag) is a text of its own.
+               (let ((pos 0) runs)
+                 (while (< pos (length suffix))
+                   (let* ((face (get-text-property pos 'face suffix))
+                          (end (or (next-single-property-change pos 'face suffix)
+                                   (length suffix))))
+                     (push (apply #'vui-text (substring-no-properties suffix pos end)
+                                  :face (cond (dim 'waves-dashboard-requeued)
+                                              (face)
+                                              (t 'waves-dashboard-detail))
+                                  props)
+                           runs)
+                     (setq pos end)))
+                 (nreverse runs)))
       row)))
 
 (defun waves-dashboard--state-icon (state)
@@ -945,14 +953,22 @@ list of vnodes, show when it is not folded."
                           (format " · %s %s" end-word
                                   (waves-dashboard--fmt-time ended))
                         "")
-                      (if extra (format " · %s" extra) ""))))
+                      (if (and extra (not (string-empty-p extra)))
+                          (format " · %s" extra)
+                        ""))))
     (delq nil
           (list
            (when (or (waves-dashboard-wave-review-started w)
                      (waves-dashboard-wave-review-finished w))
              (line "Review" (waves-dashboard-wave-review-started w)
                    "finished" (waves-dashboard-wave-review-finished w)
-                   (waves-dashboard--findings-text w)))
+                   (string-join
+                    (delq nil
+                          (list (waves-dashboard--findings-text w)
+                                (waves-dashboard--tag
+                                 (cdr (assoc "review" (waves-dashboard-wave-models w)))
+                                 (cdr (assoc "review" (waves-dashboard-wave-tokens w))))))
+                    " · ")))
            (when (or (waves-dashboard-wave-merge-started w)
                      (waves-dashboard-wave-merge-completed w))
              (line "Merge" (waves-dashboard-wave-merge-started w)
@@ -974,9 +990,14 @@ beads."
      #'vui-vstack
      (beads-dashboard--section-header
       ;; Continuations line up under "wave-", after the glyph and icon.
-      (waves-dashboard--hang (waves-dashboard--header-title w) 5)
+      (waves-dashboard--hang
+       (format "%s (%d)%s" (waves-dashboard--header-title w) (length beads)
+               (or (and waves-dashboard--tokens
+                        (waves-dashboard--wave-tokens-text w))
+                   ""))
+       5)
       (waves-dashboard--state-icon (waves-dashboard-wave-state w))
-      collapsed-p (length beads) on-toggle)
+      collapsed-p nil on-toggle)
      (unless collapsed-p
        (list
         (when-let* ((lines (waves-dashboard--phase-lines w)))
@@ -997,7 +1018,6 @@ beads."
                                   (waves-dashboard-wave-start w))))
                         (t "Beads"))
                   (length beads))
-          (and waves-dashboard--tokens (waves-dashboard--wave-tokens-text w))
           (and (or waves-dashboard--sort waves-dashboard--sort-reverse)
                (format " · by %s%s" (or waves-dashboard--sort 'priority)
                        (if waves-dashboard--sort-reverse " ↓" ""))))
@@ -1014,15 +1034,9 @@ beads."
                                 (to (cdr (assoc id marks)))
                                 (model (cdr (assoc id models)))
                                 (spent (cdr (assoc id tokens)))
-                                (tag (string-join
-                                      (delq nil (list model
-                                                      (and spent waves-dashboard--tokens
-                                                           (waves-dashboard--fmt-tokens
-                                                            spent))))
-                                      " "))
+                                (tag (waves-dashboard--tag model spent))
                                 (suffix (concat
-                                         (and (not (string-empty-p tag))
-                                              (format "  [%s]" tag))
+                                         (and tag (concat "  " tag))
                                          (and to (format "  → wave-%s" to)))))
                            (waves-dashboard--issue-row
                             b (and (not (string-empty-p suffix)) suffix) to)))
@@ -1141,7 +1155,7 @@ MODE is nil, `totals' or `priority'."
 (defun waves-dashboard--footer ()
   "Return the key-hint footer vnode."
   (vui-text (waves-dashboard--hang
-             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · $ tokens · s/S sort/reverse · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
+             "KEYS: TAB/S-TAB next/prev · SPC fold · C/E collapse/expand all · 1/2/3 fold level · t waves/timeline · T totals · $ token totals · s/S sort/reverse · e emoji/text · a auto-refresh · g refresh · RET visit · q quit"
              6)
             :face 'waves-dashboard-detail))
 
