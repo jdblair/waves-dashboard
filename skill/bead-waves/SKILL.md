@@ -41,9 +41,14 @@ coordinator 26%, review 10%, fix agents 5%. The levers, biggest first:
 - **No separate fix agents.** Apply review fixes yourself (or send them back
   to the bead's own agent with SendMessage while its context is warm); fresh
   fix agents cost ~0.69M each, mostly re-reading code.
-- **A fresh coordinator every 2 to 3 waves.** Past ~200k context each
-  coordinator turn costs 30 to 40k; end the session (summary, beads synced)
-  and let the owner start a new one. **Batch bookkeeping**: one Bash call
+- **Recommend a restart: after 3 waves in one session, or once your context
+  passes ~200k tokens (or the harness has compacted it once), whichever
+  comes first.** Past ~200k each coordinator turn costs 30 to 40k. At the
+  next wave boundary (never mid-wave), tell the owner plainly, with the
+  reason, and offer the handoff: end-of-wave sweep done, beads synced, a
+  short summary of what is merged, deployed, planned and waiting on the
+  owner, so a new session can pick up from `bd` alone. Recommend once per
+  boundary; the owner decides. **Batch bookkeeping**: one Bash call
   for several `wave` and `bd` commands, not one turn each (bookkeeping was
   22% of coordinator spend).
 - **Split big beads; agents hand back at ~150k context** with a report of
