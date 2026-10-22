@@ -25,6 +25,34 @@ five small ones averaged 67k each, two big ones cost 415k between them.
 **Prefer many small issues to one big one.** Waves of pure tidies can skip
 the review (~150k).
 
+**Token rules (owner, 2026-10-22, from a measured analysis of 46 reviewed
+waves, 245 beads; one project's report: docs/notes/wave-token-analysis.md).**
+A recent wave cost ~6.1M price-weighted tokens: implementation 58%,
+coordinator 26%, review 10%, fix agents 5%. The levers, biggest first:
+
+- **Model mix: aim for about 2 of every 5 beads on `sonnet`.** Median bead
+  cost was 0.28M on sonnet against 1.02M on opus, and sonnet beads drew no
+  more confirmed review findings. Saves ~1.0 to 1.4M per wave.
+- **Review only risky waves.** Reviews found a real defect in 37 of 46
+  waves (0.66M per defect), so they stay for any wave touching load or
+  business rules, SQL, auth, ops, deploy or a write path. Skip the review
+  for waves of only docs, research, specs, mockups or small UI tidies
+  (~0.9M saved each). Do not review every second wave instead.
+- **No separate fix agents.** Apply review fixes yourself (or send them back
+  to the bead's own agent with SendMessage while its context is warm); fresh
+  fix agents cost ~0.69M each, mostly re-reading code.
+- **A fresh coordinator every 2 to 3 waves.** Past ~200k context each
+  coordinator turn costs 30 to 40k; end the session (summary, beads synced)
+  and let the owner start a new one. **Batch bookkeeping**: one Bash call
+  for several `wave` and `bd` commands, not one turn each (bookkeeping was
+  22% of coordinator spend).
+- **Split big beads; agents hand back at ~150k context** with a report of
+  what is left, rather than running to 300k+ (the top 10% of agents spent
+  30% of agent tokens). Point agents at the functions they need in big files
+  (`api.py`, `load.py`) instead of letting each re-read them whole.
+- **Lean agent testing:** tail-only test output, one mutation per new
+  assertion, and reviewers do not repeat the agent's mutations.
+
 Stop between waves, never mid-flight (a killed wave loses everything spent
 on it); when triage turns up only trivia; or when a review finds no
 correctness defects, since the next one is insurance. Treat a stated budget
@@ -179,8 +207,11 @@ wave tokens <name> <id> <count> [--add]                    # as each agent finis
 wave plan <name> --title "…" <ids...>                      # plan ahead, don't start
 ```
 
-- **Tokens.** When a bead's agent finishes, record the `total_tokens` from
-  its task notification: `wave tokens <name> <id> <count>`. Use `--add` for
+- **Tokens.** When a bead's agent finishes, record the `total_tokens` (or
+  `subagent_tokens`) from its task notification. Know what it is: the
+  agent's final context size, not its spend (real price-weighted cost was a
+  median 4.75x that number), and the coordinator is not in it. Record it
+  anyway, for comparison between beads: `wave tokens <name> <id> <count>`. Use `--add` for
   a retry, an escalation or a fix round sent back to the same bead, so the
   count is the bead's whole cost. The dashboard shows tokens on `$`. Record
   the reviewer under the id `review` (`wave tokens <name> review <count>`).
