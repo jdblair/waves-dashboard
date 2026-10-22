@@ -144,7 +144,7 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 `M-x waves-dashboard-new-window` does the same in the window beside the current one
 (right, below, left, then above; it splits when the window is alone).
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
-the totals header (off, totals, totals by priority), `s` cycles the bead sort within each wave (priority, id, type, status, title, model, tokens) and `S` reverses it, `w` cycles the wave order (default, lexical, creation time, start time) and `W` reverses it, `$` shows token counts: beside each bead's model (`[opus 212k]`) and the review's on the Review line, the grand total in a header, and each wave's total on its heading, `C` collapses and `E` expands all waves (`E` leaves each wave's
+the totals header (off, totals, totals by priority), `s` cycles the bead sort within each wave (priority, id, type, status, title, model, tokens) and `S` reverses it, `w` cycles the wave order (default, state, lexical, creation time, start time; `state` puts in-flight, in-review, reviewed, merging, done and queued waves above merged and shipped ones) and `W` reverses it, `$` shows token counts: beside each bead's model (`[opus 212k]`) and the review's on the Review line, the grand total in a header, and each wave's total on its heading, `C` collapses and `E` expands all waves (`E` leaves each wave's
 subsections at their defaults), and `1`/`2`/`3` set a fold level: wave
 headers only, waves open with subsections folded, everything open. `e` swaps the
 emoji state icons for text names (`[deployed]`, `[merged]`, `[merging]`,

@@ -638,6 +638,17 @@ EXTRA-BEADS are added as they are."
     (should (equal (funcall names 'default nil) '("10" "2" "3" "1")))
     (should (equal (funcall names 'default t) '("1" "3" "2" "10")))
     (should (equal (funcall names 'lexical nil) '("1" "2" "3" "10")))
+    (let ((waves (list (waves-dashboard-wave--make :name "a" :state 'shipped)
+                       (waves-dashboard-wave--make :name "b" :state 'queued)
+                       (waves-dashboard-wave--make :name "c" :state 'in-flight)
+                       (waves-dashboard-wave--make :name "d" :state 'queued)
+                       (waves-dashboard-wave--make :name "e" :state 'merged))))
+      (should (equal (mapcar #'waves-dashboard-wave-name
+                             (waves-dashboard--sorted-waves waves 'state nil))
+                     '("c" "b" "d" "e" "a")))
+      (should (equal (mapcar #'waves-dashboard-wave-name
+                             (waves-dashboard--sorted-waves waves 'state t))
+                     '("a" "e" "d" "b" "c"))))
     (should (equal (funcall names 'lexical t) '("10" "3" "2" "1")))
     ;; waves without a start stay last in both directions
     (should (equal (funcall names 'start nil) '("2" "1" "10" "3")))

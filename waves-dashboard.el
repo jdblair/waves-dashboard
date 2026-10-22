@@ -497,9 +497,14 @@ then id), so the result is stable."
 
 ;;; Wave sort
 
-(defconst waves-dashboard--wave-sort-keys '(default lexical created start)
+(defconst waves-dashboard--wave-sort-keys '(default state lexical created start)
   "Wave sort keys in the order `w' cycles through them.
 `default' is the model's order: started waves newest first, then queued.")
+
+(defconst waves-dashboard--state-order
+  '(in-flight in-review reviewed merging done queued merged shipped)
+  "Wave states from most to least in need of attention, for the `state' sort.
+Work in progress first, then waves waiting their turn, then finished ones.")
 
 (defun waves-dashboard--wave-created (w)
   "Return the creation time of wave W: its earliest bead's, or nil."
@@ -516,8 +521,19 @@ whichever way REVERSE points."
   (let ((name< (lambda (a b) (waves-dashboard--name<
                               (waves-dashboard-wave-name a)
                               (waves-dashboard-wave-name b)))))
-    (if (memq key '(nil default))
-        (if reverse (reverse waves) waves)
+    (cond
+     ((memq key '(nil default))
+      (if reverse (reverse waves) waves))
+     ((eq key 'state)
+      ;; `sort' is stable, so waves of one state keep the incoming order.
+      (let ((sorted (sort (copy-sequence waves)
+                          (lambda (a b)
+                            (< (seq-position waves-dashboard--state-order
+                                             (waves-dashboard-wave-state a))
+                               (seq-position waves-dashboard--state-order
+                                             (waves-dashboard-wave-state b)))))))
+        (if reverse (nreverse sorted) sorted)))
+     (t
       (let* ((value (pcase key
                       ('lexical #'waves-dashboard-wave-name)
                       ('created #'waves-dashboard--wave-created)
@@ -530,7 +546,7 @@ whichever way REVERSE points."
                               (cond ((eq key 'lexical) (funcall name< a b))
                                     ((/= va vb) (< va vb))
                                     (t (funcall name< a b))))))))
-        (append (if reverse (nreverse known) known) unknown)))))
+        (append (if reverse (nreverse known) known) unknown))))))
 
 ;;; Totals
 
