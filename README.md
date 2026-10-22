@@ -9,7 +9,7 @@ Three parts, meant to be used together:
 | Part | Path | What it does |
 |------|------|--------------|
 | `wave` CLI | `bin/wave` | Records wave facts in the project's beads: labels member beads `wave-<name>`, and writes `bd kv` keys `wave.<name>.title`, `.dispatched`, `.deployed`, the review and merge phases (`.review.started`, `.review.finished`, `.merge.started`, `.merge.completed`), `.model.<bead id>`, `.modelsrc.<bead id>` (`chosen`, or `inherited` when no model was passed to the agent), and `.tokens.<bead id>` (tokens the bead's agents spent; `review` is the reviewer, whose model is `.model.review`). kv touches no bead, so no `updated_at` is bumped. |
-| waves-dashboard | `waves-dashboard.el` | `M-x waves-dashboard`: an Emacs view of a project's waves (beads, trunk merges, deploy, beads opened while each ran), or a chronological time spine (`t`). Read-only. |
+| waves-dashboard | `waves-dashboard.el` | `M-x waves-dashboard`: an Emacs view of a project's waves (beads, trunk merges, deploy, beads each opened), or a chronological time spine (`t`). Read-only. |
 | bead-waves skill | `skill/bead-waves/SKILL.md` | The Claude Code skill that runs waves and calls `wave` to record them. |
 
 Design rationale and the bd behaviour found while building it are in
@@ -144,7 +144,7 @@ use `M-x package-vc-install-from-checkout` or plain `load-path`:
 `M-x waves-dashboard-new-window` does the same in the window beside the current one
 (right, below, left, then above; it splits when the window is alone).
 Keys: `t` switches between the per-wave view and the time spine, `T` cycles
-the totals header (off, totals, totals by priority), `s` cycles the bead sort within each wave (priority, id, type, status, title, model, tokens) and `S` reverses it, `w` cycles the wave order (default, state, lexical, creation time, start time; `state` puts in-flight, in-review, reviewed, merging, done and queued waves above merged and shipped ones) and `W` reverses it, `$` shows token counts: beside each bead's model (`[opus 212k]`) and the review's on the Review line, the grand total in a header, and each wave's total on its heading, `C` collapses and `E` expands all waves (`E` leaves each wave's
+the totals header (off, totals, totals by priority), `s` cycles the bead sort within each wave (priority, id, type, status, title, model, tokens) and `S` reverses it, `w` cycles the wave order (default, state, lexical, creation time, start time; `state` orders in-flight, in-review, reviewed, merging, queued, done, merged, shipped, and each state by name) and `W` reverses it, `$` shows token counts: beside each bead's model (`[opus 212k]`) and the review's on the Review line, the grand total in a header, and each wave's total on its heading, `C` collapses and `E` expands all waves (`E` leaves each wave's
 subsections at their defaults), and `1`/`2`/`3` set a fold level: wave
 headers only, waves open with subsections folded, everything open. `e` swaps the
 emoji state icons for text names (`[deployed]`, `[merged]`, `[merging]`,
@@ -187,7 +187,7 @@ moved on.
 
 Inside an open wave there are three foldable parts (`RET`, `SPC` or a click
 on the heading): the wave's own beads under its "Dispatched" or "First
-merge" line, "Merges", and "Opened during the wave". Each starts folded when
+merge" line, "Merges", and "Opened by the wave". Each starts folded when
 everything in it is closed. Merges follow the wave's beads.
 
 A wave's first line says when it started:
@@ -211,11 +211,10 @@ A missing dispatch record is normal for waves that ran before `wave` was
 used: a backfill only fills facts with a source. On a new wave it means the
 orchestrating session skipped `wave dispatch`.
 
-"Opened during the wave" lists beads created between the wave's start and
-its deploy (or its last close). A bead discovered-from one of the wave's
-beads always counts. A bead labelled for some wave was filed as that wave's
-work, so it doesn't count. When windows overlap, the latest-started wave
-gets the bead.
+"Opened by the wave" lists the beads the wave's agents filed: those with a
+`discovered-from` link to one of the wave's beads (`bd create --deps
+discovered-from:<bead>`). A bead added by hand, even while the wave ran, or one
+labelled for some wave without that link, doesn't count.
 
 ## Development
 

@@ -21,7 +21,7 @@
 ;; `M-x waves-dashboard' shows the bead-waves activity of the project at
 ;; `default-directory' (with \\[universal-argument], of a project you pick):
 ;; one collapsible section per wave with its beads, trunk merges, deploy and
-;; the beads opened while it ran, plus the queued waves.  `$' adds the
+;; the beads it opened, plus the queued waves.  `$' adds the
 ;; token counts: per bead and review, the grand total and each wave's.  `t' toggles to a
 ;; chronological time spine.
 ;;
@@ -295,32 +295,18 @@ merge.started or merge.completed."
            when (equal (alist-get 'type d) "discovered-from")
            collect (alist-get 'depends_on_id d)))
 
-(defun waves-dashboard--assign-opened (waves wave-of created now)
-  "Attach each CREATED issue to the wave in WAVES it was opened during.
-A discovered-from link to a wave's bead decides.  Otherwise a bead
-with a wave label of its own is skipped, since it was filed as a
-wave's work rather than found during one, and the rest go to the
-latest-starting wave whose window holds the creation time.
-WAVE-OF maps bead ids to wave names.  NOW ends open windows."
+(defun waves-dashboard--assign-opened (waves wave-of created)
+  "Attach each CREATED issue to the wave in WAVES that opened it.
+A bead counts only when it has a discovered-from link to one of a
+wave's beads, which is how an agent files what it found while working.
+Beads added by hand, even during a wave, are not attributed to it.
+WAVE-OF maps bead ids to wave names."
   (let ((by-name (make-hash-table :test 'equal)))
     (dolist (w waves) (puthash (waves-dashboard-wave-name w) w by-name))
     (dolist (c created)
-      (let* ((tc (waves-dashboard--time (alist-get 'created_at c)))
-             (linked (cl-loop for src in (waves-dashboard--discovered-from c)
+      (let* ((linked (cl-loop for src in (waves-dashboard--discovered-from c)
                               thereis (car (gethash src wave-of))))
-             (target
-              (if linked
-                  (gethash linked by-name)
-                (when (and tc (null (waves-dashboard--wave-labels c)))
-                  (car (sort (cl-remove-if-not
-                              (lambda (w)
-                                (let ((s (waves-dashboard-wave-start w))
-                                      (e (or (waves-dashboard-wave-end w) now)))
-                                  (and s (<= s tc) (<= tc e))))
-                              waves)
-                             (lambda (a b)
-                               (> (waves-dashboard-wave-start a)
-                                  (waves-dashboard-wave-start b)))))))))
+             (target (and linked (gethash linked by-name))))
         (when target
           (push c (waves-dashboard-wave-opened target)))))
     (dolist (w waves)
@@ -333,14 +319,12 @@ WAVE-OF maps bead ids to wave names.  NOW ends open windows."
         ((< n 999500) (format "%dk" (round n 1000)))
         (t (format "%.1fM" (/ n 1e6)))))
 
-(defun waves-dashboard--model (issues kv merges created &optional now)
+(defun waves-dashboard--model (issues kv merges created)
   "Build the list of waves from bd and git data.
 ISSUES are wave-labelled beads, KV the bd kv alist, MERGES parsed
-merge commits, CREATED beads created since the earliest wave start.
-NOW (a float time) ends windows of waves still running.
+merge commits, CREATED the beads to search for ones a wave opened.
 Running and shipped waves come newest first, queued ones after."
-  (let ((now (or now (float-time)))
-        (table (make-hash-table :test 'equal))
+  (let ((table (make-hash-table :test 'equal))
         (wave-of (make-hash-table :test 'equal)))
     (cl-flet ((wave (name)
                 (or (gethash name table)
@@ -393,7 +377,7 @@ Running and shipped waves come newest first, queued ones after."
                     (lambda (a b) (< (or (plist-get a :time) 0)
                                      (or (plist-get b :time) 0)))))
         (waves-dashboard--settle w))
-      (waves-dashboard--assign-opened waves wave-of created now)
+      (waves-dashboard--assign-opened waves wave-of created)
       (waves-dashboard--mark-requeued waves)
       (let ((active (cl-remove-if (lambda (w) (eq (waves-dashboard-wave-state w)
                                                   'queued))
@@ -502,9 +486,10 @@ then id), so the result is stable."
 `default' is the model's order: started waves newest first, then queued.")
 
 (defconst waves-dashboard--state-order
-  '(in-flight in-review reviewed merging done queued merged shipped)
+  '(in-flight in-review reviewed merging queued done merged shipped)
   "Wave states from most to least in need of attention, for the `state' sort.
-Work in progress first, then waves waiting their turn, then finished ones.")
+Work in progress first, then queued waves, then finished ones.  Waves
+of one state are ordered by name.")
 
 (defun waves-dashboard--wave-created (w)
   "Return the creation time of wave W: its earliest bead's, or nil."
@@ -525,13 +510,13 @@ whichever way REVERSE points."
      ((memq key '(nil default))
       (if reverse (reverse waves) waves))
      ((eq key 'state)
-      ;; `sort' is stable, so waves of one state keep the incoming order.
       (let ((sorted (sort (copy-sequence waves)
                           (lambda (a b)
-                            (< (seq-position waves-dashboard--state-order
-                                             (waves-dashboard-wave-state a))
-                               (seq-position waves-dashboard--state-order
-                                             (waves-dashboard-wave-state b)))))))
+                            (let ((ra (seq-position waves-dashboard--state-order
+                                                    (waves-dashboard-wave-state a)))
+                                  (rb (seq-position waves-dashboard--state-order
+                                                    (waves-dashboard-wave-state b))))
+                              (if (= ra rb) (funcall name< a b) (< ra rb)))))))
         (if reverse (nreverse sorted) sorted)))
      (t
       (let* ((value (pcase key
@@ -606,7 +591,7 @@ SPENT shows only while the token toggle is on."
   "Return summary counts over WAVES as a plist.
 :waves counts waves by state (an alist), and :queued, :new, :closed
 are alists of priority . count with the total under key `all'.
-Queued counts the beads of queued waves, new the beads opened during
+Queued counts the beads of queued waves, new the beads opened by
 a wave, closed the closed beads of each wave.  A bead counts once
 per category, so one opened in a wave and closed in a later one
 counts as new in the first and closed in the second.  :merges
@@ -769,8 +754,8 @@ in one project stall each other.  RESULTS accumulates across steps."
 
 (defun waves-dashboard--collect (root resolve reject)
   "Load ROOT's wave data asynchronously; RESOLVE with the wave list.
-One `bd list --all' feeds both the wave members and the beads opened
-during waves.  Narrower bd queries are no help in bd 1.2.2:
+One `bd list --all' feeds both the wave members and the beads
+opened by waves.  Narrower bd queries are no help in bd 1.2.2:
 --label-pattern and --label-regex are ignored, and `bd label list-all'
 takes over 20 s on a ~740-bead project where `bd list --all' takes 0.4."
   (waves-dashboard--series
@@ -1114,7 +1099,7 @@ beads."
             merges)))
         (when opened
           (waves-dashboard--subsection
-           (format "Opened during the wave (%d)" (length opened))
+           (format "Opened by the wave (%d)" (length opened))
            'font-lock-comment-face
            (funcall fold "opened" (waves-dashboard--all-closed-p opened))
            (mapcar

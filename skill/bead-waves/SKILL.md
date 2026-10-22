@@ -156,6 +156,10 @@ changed in files others share. Two agents editing one file is usually fine;
 two changing a *contract* in it is a semantic conflict no textual merge
 catches, and only the suite will find it.
 
+Tell agents to file anything they find outside their bead with
+`bd create ... --deps discovered-from:<their-id>`. The dashboard lists under
+"Opened by the wave" only beads carrying that link.
+
 ## Agents talking mid-wave
 
 Agents can't list their siblings. Put both channels in every prompt of a

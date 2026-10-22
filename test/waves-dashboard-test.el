@@ -26,8 +26,7 @@
    (waves-dashboard--json (wdt--read "demo-waves.json"))
    kv
    (waves-dashboard--parse-merges (wdt--read "demo-merges.txt"))
-   (waves-dashboard--json (wdt--read "demo-created.json"))
-   (waves-dashboard--time "2026-10-16T09:30:00Z")))
+   (waves-dashboard--json (wdt--read "demo-created.json"))))
 
 (defun wdt--wave (name waves)
   (cl-find name waves :key #'waves-dashboard-wave-name :test #'equal))
@@ -88,11 +87,12 @@
                          (waves-dashboard-wave-opened w6))))
     (should-not (member "demo-w4nv" opened))))
 
-(ert-deftest waves-dashboard-opened-during-wave ()
-  ;; Inside one window: an unlabelled bead is opened during it, a
-  ;; labelled one is not unless discovered from one of the wave's beads.
+(ert-deftest waves-dashboard-opened-by-wave ()
+  ;; Only a bead discovered-from one of the wave's beads was opened by it:
+  ;; one filed by hand inside the window (x-2) or labelled for another wave
+  ;; without a link (x-3) was not.
   (let* ((member '((id . "x-1") (status . "open") (labels "wave-1")))
-         (found '((id . "x-2") (created_at . "2026-10-16T10:30:00Z")))
+         (by-hand '((id . "x-2") (created_at . "2026-10-16T10:30:00Z")))
          (planned '((id . "x-3") (created_at . "2026-10-16T10:30:00Z")
                     (labels "wave-2")))
          (linked '((id . "x-4") (created_at . "2026-10-16T10:30:00Z")
@@ -103,11 +103,10 @@
                  (list member planned linked)
                  '((wave.1.dispatched . "2026-10-16T10:00:00Z"))
                  nil
-                 (list member found planned linked)
-                 (waves-dashboard--time "2026-10-16T11:00:00Z")))
+                 (list member by-hand planned linked)))
          (opened (mapcar (lambda (b) (alist-get 'id b))
                          (waves-dashboard-wave-opened (wdt--wave "1" waves)))))
-    (should (equal opened '("x-2" "x-4")))))
+    (should (equal opened '("x-4")))))
 
 (ert-deftest waves-dashboard-subject-ids ()
   (let ((known (make-hash-table :test 'equal)))
@@ -218,7 +217,7 @@ EXTRA-BEADS are added as they are."
        (wave.2.dispatched . "2026-10-16T11:00:00Z")
        (wave.3.dispatched . "2026-10-16T10:30:00Z")
        (wave.3.deployed . "2026-10-16T11:30:00Z abc1234"))
-     nil nil (waves-dashboard--time "2026-10-16T12:00:00Z"))))
+     nil nil)))
 
 (ert-deftest waves-dashboard-requeued-marks-later-waves-only ()
   (let* ((waves (wdt--requeue-model))
@@ -473,7 +472,7 @@ EXTRA-BEADS are added as they are."
                           (labels "wave-1")
                           (closed_at . "2026-10-16T10:30:00Z")))
                   (append '((wave.1.dispatched . "2026-10-16T10:00:00Z")) kv)
-                  nil nil (waves-dashboard--time "2026-10-16T12:00:00Z"))))
+                  nil nil)))
 
 (defconst wdt--rs '(wave.1.review.started . "2026-10-16T10:40:00Z"))
 (defconst wdt--rf '(wave.1.review.finished . "2026-10-16T11:00:00Z findings=3 fixed=2"))
@@ -600,7 +599,7 @@ EXTRA-BEADS are added as they are."
                (append '((wave.1.dispatched . "2026-10-16T10:00:00Z")
                          (wave.2.dispatched . "2026-10-16T11:00:00Z"))
                        kv)
-               nil nil (waves-dashboard--time "2026-10-16T12:00:00Z"))))
+               nil nil)))
     (dolist (case '((wave.2.review.started . in-review)
                     (wave.2.review.finished . reviewed)
                     (wave.2.merge.started . merging)))
@@ -639,16 +638,17 @@ EXTRA-BEADS are added as they are."
     (should (equal (funcall names 'default t) '("1" "3" "2" "10")))
     (should (equal (funcall names 'lexical nil) '("1" "2" "3" "10")))
     (let ((waves (list (waves-dashboard-wave--make :name "a" :state 'shipped)
-                       (waves-dashboard-wave--make :name "b" :state 'queued)
-                       (waves-dashboard-wave--make :name "c" :state 'in-flight)
                        (waves-dashboard-wave--make :name "d" :state 'queued)
+                       (waves-dashboard-wave--make :name "c" :state 'in-flight)
+                       (waves-dashboard-wave--make :name "b" :state 'queued)
+                       (waves-dashboard-wave--make :name "f" :state 'done)
                        (waves-dashboard-wave--make :name "e" :state 'merged))))
       (should (equal (mapcar #'waves-dashboard-wave-name
                              (waves-dashboard--sorted-waves waves 'state nil))
-                     '("c" "b" "d" "e" "a")))
+                     '("c" "b" "d" "f" "e" "a")))
       (should (equal (mapcar #'waves-dashboard-wave-name
                              (waves-dashboard--sorted-waves waves 'state t))
-                     '("a" "e" "d" "b" "c"))))
+                     '("a" "e" "f" "d" "b" "c"))))
     (should (equal (funcall names 'lexical t) '("10" "3" "2" "1")))
     ;; waves without a start stay last in both directions
     (should (equal (funcall names 'start nil) '("2" "1" "10" "3")))
