@@ -5,7 +5,7 @@ description: Close many issues in one session by working ~5 at a time in paralle
 
 # bead-waves
 
-Triage ~5 issues → one agent each → coordinator runs the test suite once →
+Triage ~5 issues → one agent each (related small ones may share an agent) → coordinator runs the test suite once →
 commit per issue → fresh agent reviews the wave → fix findings → next wave.
 Invoking this skill is the grant of autonomy: pick the issues, commit,
 close, continue. Say the picks and why, don't wait for approval.
@@ -30,9 +30,11 @@ waves, 245 beads; one project's report: docs/notes/wave-token-analysis.md).**
 A recent wave cost ~6.1M price-weighted tokens: implementation 58%,
 coordinator 26%, review 10%, fix agents 5%. The levers, biggest first:
 
-- **Model mix: aim for about 2 of every 5 beads on `sonnet`.** Median bead
-  cost was 0.28M on sonnet against 1.02M on opus, and sonnet beads drew no
-  more confirmed review findings. Saves ~1.0 to 1.4M per wave.
+- **Model mix: default to `sonnet`; aim for 3 or 4 of every 5 beads on it**
+  (owner, 2026-10-26; was 2 of 5). Median bead cost was 0.28M on sonnet
+  against 1.02M on opus, and sonnet beads drew no more confirmed review
+  findings. Use the stronger model only for the cases under Choosing a
+  model, and escalate a sonnet bead that fails review or its tests.
 - **Review only risky waves.** Reviews found a real defect in 37 of 46
   waves (0.66M per defect), so they stay for any wave touching load or
   business rules, SQL, auth, ops, deploy or a write path. Skip the review
@@ -55,6 +57,17 @@ coordinator 26%, review 10%, fix agents 5%. The levers, biggest first:
   what is left, rather than running to 300k+ (the top 10% of agents spent
   30% of agent tokens). Point agents at the functions they need in big files
   (`api.py`, `load.py`) instead of letting each re-read them whole.
+- **Never read `docs/design/README.md` whole** (owner, 2026-10-26). It is
+  ~274 KB, about 70k tokens, and costs more than the median bead. Put this in
+  every agent and reviewer prompt: grep its headings, read only the section
+  you edit or cite. The same goes for any file over ~50 KB.
+- **Group related small beads into one agent** (owner, 2026-10-26). Two or
+  three small beads on the same file or module go to one agent, sequentially,
+  so they share one cold start instead of re-reading the same code. Record
+  each bead's tokens with `wave tokens ... --add`. Do not group beads that
+  need different models, or two that change the same contract.
+- **Short agent reports:** each agent's final report is at most ~200 words
+  (see Prompts). The coordinator re-reads every report on every later turn.
 - **Lean agent testing:** tail-only test output, one mutation per new
   assertion, and reviewers do not repeat the agent's mutations.
 
@@ -69,10 +82,12 @@ sustained work is implied.
 
 Pick a model per bead when you spawn its agent (the Agent tool's `model`).
 
-- **Cheaper (`sonnet`):** small and well specified — a clear fix, rename,
-  docs, a test for existing behaviour, a one-file change.
-- **Stronger:** needs design judgment, touches several files or modules, or
-  has a vague description. When in doubt, use the stronger one.
+- **Default `sonnet`:** a clear fix, rename, docs, a test for existing
+  behaviour, a UI tidy, a change in one or two files, or anything with a
+  concrete description. When in doubt, start on `sonnet` and escalate.
+- **Stronger:** needs design judgment, touches several modules, changes a
+  shared contract (signature, schema, route, signal shape) or a write path,
+  or has a vague description.
 - **A `model:cheap` or `model:strong` label on the bead overrides this.**
 - **Escalate:** a cheap-model bead that fails review or its tests is
   re-queued on the stronger model.
@@ -155,6 +170,13 @@ the files it's expected to touch. Ask each agent to report exactly what it
 changed in files others share. Two agents editing one file is usually fine;
 two changing a *contract* in it is a semantic conflict no textual merge
 catches, and only the suite will find it.
+
+**Cap the report** (owner, 2026-10-26): tell each agent its final report is
+at most ~200 words, in a fixed shape: files changed (flag any shared file or
+contract), tests run and result, what is left or refused and why, anything
+filed. No narration of steps; the diff is the record. Tell every agent not to
+read `docs/design/README.md` whole: grep its headings and read only the
+section it needs.
 
 Tell agents to file anything they find outside their bead with
 `bd create ... --deps discovered-from:<their-id>`. The dashboard lists under
@@ -271,70 +293,18 @@ to say plainly which commits are clean, and not to manufacture findings.
 
 ## End of each wave: sweep
 
-Shut down what the wave stopped using at the end of each wave, not at
-session end. **Never sweep mid-wave**: agents in worktrees are reusing a warm
-database, and a wrong guess looks like a broken test to another session.
-Worktree existence and attachment counts are the evidence, not age or a
-stale-looking name.
-
-1. **Confirm no test run is live.** A bare process-name grep lies (see the
-   waiter trap); match the actual interpreter invocation, or probe a lock.
-2. **Confirm merged**: `git branch --merged <main> | grep wip/`.
-3. Remove each merged worktree, then its per-worktree resources (container,
-   volume, network), by exact name; no blanket prune.
-4. Keep the main checkout's long-lived test resource.
+At the end of every wave, read "End of each wave: sweep" in `reference.md`
+(same directory) and follow it. **Never sweep mid-wave**: agents in worktrees
+are reusing a warm database.
 
 ## Harness traps
 
-**A symlink in a worktree can empty its target.** An agent that symlinks
-`ui/node_modules` (or any heavy directory) from the main checkout into its
-worktree puts the main copy at risk: `git worktree remove --force` followed
-the link and emptied the main checkout's `node_modules` (restored with
-`npm ci`). Before removing a worktree run `rm <worktree>/ui/node_modules`
-(no trailing slash, so only the link goes), and tell agents to do the same
-before they finish. For a deploy build, copy the built `ui/dist` into a
-clean worktree instead of linking `node_modules`.
-
-**Orphaned background waiters.** An agent that abandons a background run
-leaves an `until ...; do sleep N; done` shell polling a file nothing will
-write. They don't appear in `ListAgents`; look for what they wait on:
-
-```bash
-ps -eo pid,ppid,etimes,args | grep -E "[u]ntil .*pgrep"
-```
-
-A waiter whose own `pgrep -f "<pattern>"` appears in its own command line
-matches itself and never exits, and `pgrep -f <testcmd>` counts it as a live
-test run. Killing one is safe.
-
-**A finished agent can keep burning tokens.** If one agent's
-task-notification repeats and its token count **creeps up between notices**,
-leftover background work is re-invoking it. `TaskStop` it the first time the
-number moves; its report and branch are unaffected.
-
-**When you stop an agent yourself**, check its branch first; it may have
-committed. You can resume it with `SendMessage` and ask for the report it
-never delivered, saying the stop was your call and asking what it had *not*
-finished.
-
-**When the owner stops an agent**, it cannot be resumed: `SendMessage`
-refuses. Clean up and retry once with a fresh agent:
-
-1. Look at what it left (`git status`, `git diff`, its branch or worktree).
-   The work is uncommitted and untested; never commit it as is.
-2. Spawn one fresh agent with the original brief plus: "a previous agent was
-   stopped partway; its unverified changes are in these files; judge each part
-   against the brief, keep what is right, fix or finish the rest". Name where
-   it stopped if the notification says.
-3. If the retry is stopped or fails too, don't spawn a third: revert or park
-   the changes, leave the bead open with a comment, and tell the owner.
-
-Ask the owner first only if the stop might have meant "don't do this at all"
-rather than "not like this".
+Read "Harness traps" in `reference.md` when a worktree is removed, an agent
+looks stuck or keeps burning tokens, or an agent is stopped (by you or the
+owner). Always `rm <worktree>/ui/node_modules` (no trailing slash) before
+`git worktree remove`: a symlinked `node_modules` gets emptied in the main
+checkout.
 
 ## Bookkeeping
 
-Read issue IDs back from the create command's output before citing them in
-a commit message; invented ones needed two amends. When an agent's report
-corrects a premise you gave it, carry the correction into the commit message
-and the issue.
+Read "Bookkeeping" in `reference.md` before writing commit messages.
