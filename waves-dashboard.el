@@ -547,6 +547,8 @@ TOTAL includes the reviewer, recorded under the id `review'."
   (when-let* ((sum (waves-dashboard--wave-token-sum w)))
     (concat " " (waves-dashboard--tag nil (car sum)))))
 
+(defvar waves-dashboard--tokens)   ; buffer-local, defined with the view state
+
 (defun waves-dashboard--tag (model spent)
   "Return \"[MODEL SPENT]\", or nil when both are nil.
 SPENT shows only while the token toggle is on."
