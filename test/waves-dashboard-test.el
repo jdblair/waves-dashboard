@@ -26,8 +26,7 @@
    (waves-dashboard--json (wdt--read "demo-waves.json"))
    kv
    (waves-dashboard--parse-merges (wdt--read "demo-merges.txt"))
-   (waves-dashboard--json (wdt--read "demo-created.json"))
-   (waves-dashboard--time "2026-10-16T09:30:00Z")))
+   (waves-dashboard--json (wdt--read "demo-created.json"))))
 
 (defun wdt--wave (name waves)
   (cl-find name waves :key #'waves-dashboard-wave-name :test #'equal))
@@ -88,11 +87,12 @@
                          (waves-dashboard-wave-opened w6))))
     (should-not (member "demo-w4nv" opened))))
 
-(ert-deftest waves-dashboard-opened-during-wave ()
-  ;; Inside one window: an unlabelled bead is opened during it, a
-  ;; labelled one is not unless discovered from one of the wave's beads.
+(ert-deftest waves-dashboard-opened-by-wave ()
+  ;; Only a bead discovered-from one of the wave's beads was opened by it:
+  ;; one filed by hand inside the window (x-2) or labelled for another wave
+  ;; without a link (x-3) was not.
   (let* ((member '((id . "x-1") (status . "open") (labels "wave-1")))
-         (found '((id . "x-2") (created_at . "2026-10-16T10:30:00Z")))
+         (by-hand '((id . "x-2") (created_at . "2026-10-16T10:30:00Z")))
          (planned '((id . "x-3") (created_at . "2026-10-16T10:30:00Z")
                     (labels "wave-2")))
          (linked '((id . "x-4") (created_at . "2026-10-16T10:30:00Z")
@@ -103,11 +103,10 @@
                  (list member planned linked)
                  '((wave.1.dispatched . "2026-10-16T10:00:00Z"))
                  nil
-                 (list member found planned linked)
-                 (waves-dashboard--time "2026-10-16T11:00:00Z")))
+                 (list member by-hand planned linked)))
          (opened (mapcar (lambda (b) (alist-get 'id b))
                          (waves-dashboard-wave-opened (wdt--wave "1" waves)))))
-    (should (equal opened '("x-2" "x-4")))))
+    (should (equal opened '("x-4")))))
 
 (ert-deftest waves-dashboard-subject-ids ()
   (let ((known (make-hash-table :test 'equal)))
@@ -218,7 +217,7 @@ EXTRA-BEADS are added as they are."
        (wave.2.dispatched . "2026-10-16T11:00:00Z")
        (wave.3.dispatched . "2026-10-16T10:30:00Z")
        (wave.3.deployed . "2026-10-16T11:30:00Z abc1234"))
-     nil nil (waves-dashboard--time "2026-10-16T12:00:00Z"))))
+     nil nil)))
 
 (ert-deftest waves-dashboard-requeued-marks-later-waves-only ()
   (let* ((waves (wdt--requeue-model))
@@ -331,6 +330,72 @@ EXTRA-BEADS are added as they are."
       (goto-char (point-min))
       (should (search-forward "[sonnet]" nil t)))))
 
+(ert-deftest waves-dashboard-tokens-kv-and-row ()
+  (let* ((waves (wdt--model '(("wave.6.model.demo-r8tq" . "sonnet")
+                              ("wave.6.tokens.demo-r8tq" . "67400")
+                              ("wave.6.tokens.review" . "90000")
+                              ("wave.6.model.review" . "opus")
+                              ("wave.6.review.started" . "2026-10-20T10:00:00Z")
+                              ("wave.6.tokens.demo-a" . "junk"))))
+         (w1 (wdt--wave "6" waves)))
+    (should (equal (cdr (assoc "demo-r8tq" (waves-dashboard-wave-tokens w1)))
+                   67400))
+    (should-not (assoc "demo-a" (waves-dashboard-wave-tokens w1)))
+    (cl-flet ((render (on)
+                (with-temp-buffer
+                  (setq waves-dashboard--tokens on)
+                  (vui--render-vnode (waves-dashboard--wave-vnode
+                                      w1 nil #'ignore
+                                      (lambda (_ d) (cons nil #'ignore))))
+                  (buffer-string))))
+      (let ((off (render nil)) (on (render t)))
+        (should (string-search "[sonnet]" off))
+        (should-not (string-search "67k" off))
+        (should-not (string-search "90k" off))
+        (should (string-search "[sonnet 67k]" on))
+        (should (string-search "Review started" off))
+        (should (string-search "[opus]" off))
+        (should (string-search "[opus 90k]" on))
+        (should-not (string-search "(7) [157k]" off))
+        (should (string-search "(7) [157k]" on))))
+    (should (equal (waves-dashboard--tokens-lines waves)
+                   '("  Tokens  157k across 1 waves · 1 beads · 67k per bead")))
+    (should (equal (waves-dashboard--tokens-lines (wdt--model))
+                   '("  Tokens  none recorded (wave tokens <wave> <id> <count>)")))))
+
+(ert-deftest waves-dashboard-sorted-beads ()
+  (let* ((waves (wdt--model '(("wave.6.tokens.demo-r8tq" . "500")
+                              ("wave.6.model.demo-r8tq" . "sonnet"))))
+         (w (wdt--wave "6" waves))
+         (ids (lambda (key rev)
+                (mapcar (lambda (b) (alist-get 'id b))
+                        (waves-dashboard--sorted-beads w key rev))))
+         (model-order (mapcar (lambda (b) (alist-get 'id b))
+                              (waves-dashboard-wave-beads w))))
+    (should (> (length model-order) 1))
+    (should (equal (funcall ids nil nil) model-order))
+    (should (equal (funcall ids nil t) (reverse model-order)))
+    (should (equal (funcall ids 'id nil) (sort (copy-sequence model-order) #'string<)))
+    ;; the one bead with tokens sorts last ascending, first reversed
+    (should (equal (car (last (funcall ids 'tokens nil))) "demo-r8tq"))
+    (should (equal (car (funcall ids 'tokens t)) "demo-r8tq"))
+    (should (equal (car (funcall ids 'model nil)) "demo-r8tq"))
+    ;; the model's own list is never reordered
+    (should (equal (mapcar (lambda (b) (alist-get 'id b)) (waves-dashboard-wave-beads w))
+                   model-order))
+    (with-temp-buffer
+      (setq waves-dashboard--sort 'id waves-dashboard--sort-reverse t)
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          w nil #'ignore (lambda (_ d) (cons nil #'ignore))))
+      (should (string-search "· by id ↓" (buffer-string))))))
+
+(ert-deftest waves-dashboard-fmt-tokens ()
+  (should (equal (waves-dashboard--fmt-tokens 950) "950"))
+  (should (equal (waves-dashboard--fmt-tokens 67400) "67k"))
+  (should (equal (waves-dashboard--fmt-tokens 999499) "999k"))
+  (should (equal (waves-dashboard--fmt-tokens 999500) "1.0M"))
+  (should (equal (waves-dashboard--fmt-tokens 1250000) "1.2M")))
+
 (ert-deftest waves-dashboard-state-icon-emoji-or-text ()
   (let ((waves-dashboard--emoji t))
     (should (equal (waves-dashboard--state-icon 'shipped) "🚀")))
@@ -397,6 +462,200 @@ EXTRA-BEADS are added as they are."
             (select-window first)
             (should-not (eq (waves-dashboard--display-adjacent buf nil) first)))
         (kill-buffer buf)))))
+
+;;; Review and merge phases
+
+(defun wdt--phase-wave (kv &optional status)
+  "Wave 1: one bead with STATUS (default closed) and the kv facts KV."
+  (wdt--wave "1" (waves-dashboard--model
+                  (list `((id . "demo-a") (status . ,(or status "closed"))
+                          (labels "wave-1")
+                          (closed_at . "2026-10-16T10:30:00Z")))
+                  (append '((wave.1.dispatched . "2026-10-16T10:00:00Z")) kv)
+                  nil nil)))
+
+(defconst wdt--rs '(wave.1.review.started . "2026-10-16T10:40:00Z"))
+(defconst wdt--rf '(wave.1.review.finished . "2026-10-16T11:00:00Z findings=3 fixed=2"))
+(defconst wdt--ms '(wave.1.merge.started . "2026-10-16T11:10:00Z"))
+(defconst wdt--mc '(wave.1.merge.completed . "2026-10-16T11:15:00Z abc1234"))
+(defconst wdt--dp '(wave.1.deployed . "2026-10-16T11:30:00Z abc1234"))
+
+(ert-deftest waves-dashboard-phase-state-precedence ()
+  (dolist (case `((nil done)
+                  ((,wdt--rs) in-review)  ; all closed, but review beats done
+                  ((,wdt--rs ,wdt--rf) reviewed)
+                  ((,wdt--rs ,wdt--rf ,wdt--ms) merging)
+                  ((,wdt--ms) merging)    ; review skipped
+                  ((,wdt--rs ,wdt--ms ,wdt--mc) merged)
+                  ((,wdt--mc) merged)
+                  ((,wdt--rs ,wdt--rf ,wdt--ms ,wdt--mc ,wdt--dp) shipped)
+                  ((,wdt--mc ,wdt--dp) shipped)))
+    (should (equal (list (car case)
+                         (waves-dashboard-wave-state (wdt--phase-wave (car case))))
+                   case))))
+
+(ert-deftest waves-dashboard-phase-beats-in-flight ()
+  (should (eq (waves-dashboard-wave-state (wdt--phase-wave nil "open")) 'in-flight))
+  (should (eq (waves-dashboard-wave-state
+               (wdt--phase-wave (list wdt--rs) "open"))
+              'in-review)))
+
+(ert-deftest waves-dashboard-phase-kv-parsed ()
+  (let ((w (wdt--phase-wave (list wdt--rs wdt--rf wdt--ms wdt--mc))))
+    (should (= (waves-dashboard-wave-review-started w)
+               (waves-dashboard--time "2026-10-16T10:40:00Z")))
+    (should (= (waves-dashboard-wave-review-finished w)
+               (waves-dashboard--time "2026-10-16T11:00:00Z")))
+    (should (equal (list (waves-dashboard-wave-findings w)
+                         (waves-dashboard-wave-fixed w))
+                   '(3 2)))
+    (should (= (waves-dashboard-wave-merge-completed w)
+               (waves-dashboard--time "2026-10-16T11:15:00Z")))
+    (should (equal (waves-dashboard-wave-merge-sha w) "abc1234"))
+    (should (equal (waves-dashboard--findings-text w) "3 findings, 2 fixed")))
+  ;; No counts recorded: no counts shown.  One finding is singular.
+  (let ((w (wdt--phase-wave '((wave.1.review.started . "2026-10-16T10:40:00Z")
+                              (wave.1.review.finished . "2026-10-16T11:00:00Z")))))
+    (should (waves-dashboard-wave-review-finished w))
+    (should-not (waves-dashboard--findings-text w)))
+  (should (equal (waves-dashboard--findings-text
+                  (waves-dashboard-wave--make :findings 1))
+                 "1 finding")))
+
+(ert-deftest waves-dashboard-phase-header-and-lines ()
+  (let ((reviewing (wdt--phase-wave (list wdt--rs)))
+        (reviewed (wdt--phase-wave (list wdt--rs wdt--rf)))
+        (merging (wdt--phase-wave (list wdt--rs wdt--rf wdt--ms)))
+        (merged (wdt--phase-wave (list wdt--ms wdt--mc))))
+    (should (string-match-p " · in review since "
+                            (waves-dashboard--header-title reviewing)))
+    (should (string-match-p " · reviewed .* (3 findings, 2 fixed)\\'"
+                            (waves-dashboard--header-title reviewed)))
+    (should (string-match-p " · merging since "
+                            (waves-dashboard--header-title merging)))
+    (should (string-match-p " · merged .* (abc1234)\\'"
+                            (waves-dashboard--header-title merged)))
+    (should (equal (length (waves-dashboard--phase-lines reviewing)) 1))
+    (should (equal (length (waves-dashboard--phase-lines merging)) 2))
+    ;; Review skipped: only the merge line.
+    (should (equal (length (waves-dashboard--phase-lines merged)) 1))
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          merging nil #'ignore
+                          (lambda (_ d) (cons d #'ignore))))
+      (let ((text (buffer-string)))
+        (should (string-match-p
+                 "^    Review started .* · finished .* · 3 findings, 2 fixed$" text))
+        (should (string-match-p "^    Merge started [^·\n]*$" text))
+        ;; Phase lines come before the Dispatched subsection.
+        (should (< (string-match "Review started" text)
+                   (string-match "Dispatched" text)))))
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          merged nil #'ignore
+                          (lambda (_ d) (cons d #'ignore))))
+      (should (string-match-p "^    Merge started .* · completed .* · abc1234$"
+                              (buffer-string)))
+      (should-not (string-match-p "Review" (buffer-string))))
+    ;; A collapsed wave shows its header only.
+    (with-temp-buffer
+      (vui--render-vnode (waves-dashboard--wave-vnode
+                          merging t #'ignore
+                          (lambda (_ d) (cons d #'ignore))))
+      (should-not (string-match-p "Review started" (buffer-string))))))
+
+(ert-deftest waves-dashboard-phase-events ()
+  (let* ((w (wdt--phase-wave (list wdt--rs wdt--rf wdt--ms wdt--mc)))
+         (events (cl-remove-if-not
+                  (lambda (e) (string-match-p "\\`\\(review\\|merge\\)-"
+                                              (plist-get e :kind)))
+                  (waves-dashboard--events (list w)))))
+    (should (equal (mapcar (lambda (e) (list (plist-get e :kind) (plist-get e :text)))
+                           events)
+                   '(("review-started" "") ("review-finished" "3 findings, 2 fixed")
+                     ("merge-started" "") ("merge-completed" "abc1234"))))
+    (should (equal (plist-get (car events) :time)
+                   (waves-dashboard--time "2026-10-16T10:40:00Z")))))
+
+(ert-deftest waves-dashboard-phase-icons-distinct ()
+  (let ((states (mapcar #'car waves-dashboard--states)))
+    (should (equal states '(shipped merged merging reviewed in-review
+                            done in-flight queued)))
+    (dolist (emoji '(t nil))
+      (let* ((waves-dashboard--emoji emoji)
+             (icons (mapcar #'waves-dashboard--state-icon states)))
+        (should (= (length (delete-dups (copy-sequence icons))) (length states)))))
+    (let ((waves-dashboard--emoji nil))
+      (should (equal (mapcar #'waves-dashboard--state-icon
+                             '(in-review reviewed merging merged))
+                     '("[in review]" "[reviewed]" "[merging]" "[merged]"))))))
+
+(ert-deftest waves-dashboard-phase-requeued-and-collapse ()
+  ;; demo-a is open in wave 1 and in a later wave 2.  A later wave still in
+  ;; review has not finished, so demo-a moved on to it; a merged one has.
+  (cl-flet ((model (kv)
+              (waves-dashboard--model
+               (list '((id . "demo-a") (status . "open") (labels "wave-1" "wave-2")))
+               (append '((wave.1.dispatched . "2026-10-16T10:00:00Z")
+                         (wave.2.dispatched . "2026-10-16T11:00:00Z"))
+                       kv)
+               nil nil)))
+    (dolist (case '((wave.2.review.started . in-review)
+                    (wave.2.review.finished . reviewed)
+                    (wave.2.merge.started . merging)))
+      (let* ((waves (model (list (cons (car case) "2026-10-16T11:30:00Z"))))
+             (w1 (wdt--wave "1" waves)))
+        (should (eq (waves-dashboard-wave-state (wdt--wave "2" waves)) (cdr case)))
+        (should (equal (waves-dashboard-wave-requeued w1) '(("demo-a" . "2"))))))
+    (let ((waves (model '((wave.2.merge.started . "2026-10-16T11:30:00Z")
+                          (wave.2.merge.completed . "2026-10-16T11:40:00Z")))))
+      (should-not (waves-dashboard-wave-requeued (wdt--wave "1" waves)))))
+  ;; Merged waves count as finished for the expanded-shipped limit.
+  (let ((waves-dashboard-expanded-shipped 1))
+    (should (equal (waves-dashboard--default-collapsed
+                    (list (waves-dashboard-wave--make :name "2" :state 'merged)
+                          (waves-dashboard-wave--make :name "1" :state 'shipped)
+                          (waves-dashboard-wave--make :name "3" :state 'in-review)))
+                   '("1")))))
+
+(ert-deftest waves-dashboard-phase-totals-labels ()
+  (let ((lines (waves-dashboard--totals-lines
+                (waves-dashboard--totals
+                 (list (waves-dashboard-wave--make :name "1" :state 'in-review)
+                       (waves-dashboard-wave--make :name "2" :state 'merged)))
+                nil)))
+    (should (string-match-p "2 waves (1 merged, 1 in review)" (car lines)))))
+
+(ert-deftest waves-dashboard-sorted-waves ()
+  (let* ((mk (lambda (name start)
+               (waves-dashboard-wave--make :name name :start start)))
+         (waves (list (funcall mk "10" 300.0) (funcall mk "2" 100.0)
+                      (funcall mk "3" nil) (funcall mk "1" 200.0)))
+         (names (lambda (key rev)
+                  (mapcar #'waves-dashboard-wave-name
+                          (waves-dashboard--sorted-waves waves key rev)))))
+    (should (equal (funcall names 'default nil) '("10" "2" "3" "1")))
+    (should (equal (funcall names 'default t) '("1" "3" "2" "10")))
+    (should (equal (funcall names 'lexical nil) '("1" "2" "3" "10")))
+    (let ((waves (list (waves-dashboard-wave--make :name "a" :state 'shipped)
+                       (waves-dashboard-wave--make :name "d" :state 'queued)
+                       (waves-dashboard-wave--make :name "c" :state 'in-flight)
+                       (waves-dashboard-wave--make :name "b" :state 'queued)
+                       (waves-dashboard-wave--make :name "f" :state 'done)
+                       (waves-dashboard-wave--make :name "e" :state 'merged))))
+      (should (equal (mapcar #'waves-dashboard-wave-name
+                             (waves-dashboard--sorted-waves waves 'state nil))
+                     '("c" "b" "d" "f" "e" "a")))
+      (should (equal (mapcar #'waves-dashboard-wave-name
+                             (waves-dashboard--sorted-waves waves 'state t))
+                     '("a" "e" "f" "d" "b" "c"))))
+    (should (equal (funcall names 'lexical t) '("10" "3" "2" "1")))
+    ;; waves without a start stay last in both directions
+    (should (equal (funcall names 'start nil) '("2" "1" "10" "3")))
+    (should (equal (funcall names 'start t) '("10" "1" "2" "3")))
+    ;; no bead creation times: every wave is unknown, ordered by name
+    (should (equal (funcall names 'created nil) '("1" "2" "3" "10")))
+    (should (equal (mapcar #'waves-dashboard-wave-name waves) '("10" "2" "3" "1")))))
 
 (ert-deftest waves-dashboard-level-3-opens-only-active-waves ()
   (let* ((waves (list (waves-dashboard-wave--make :name "q" :state 'queued)

@@ -8,11 +8,18 @@ DEPS  := $(filter-out $(ELPA)/waves-dashboard%,$(wildcard $(ELPA)/*/)) $(wildcar
 LOAD_PATH ?= -L . $(foreach d,$(DEPS),-L $(d))
 
 BATCH = $(EMACS) -Q --batch $(LOAD_PATH)
+PYTHON ?= python3
 
-.PHONY: test check clean
+.PHONY: test test-el test-wave check clean
 
-test:
+test: test-el test-wave
+
+test-el:
 	@$(BATCH) -l test/waves-dashboard-test.el -f ert-run-tests-batch-and-exit
+
+# bin/wave against a stub bd on PATH: no real beads database is touched.
+test-wave:
+	@$(PYTHON) -m unittest discover -s test -p 'test_*.py'
 
 # Byte-compile with every warning shown; fails only on errors.  The .elc
 # is removed afterwards so a stale one can never shadow the source.
@@ -23,3 +30,4 @@ check:
 
 clean:
 	rm -f *.elc test/*.elc
+	rm -rf test/__pycache__

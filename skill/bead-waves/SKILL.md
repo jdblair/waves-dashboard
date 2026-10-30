@@ -25,6 +25,39 @@ five small ones averaged 67k each, two big ones cost 415k between them.
 **Prefer many small issues to one big one.** Waves of pure tidies can skip
 the review (~150k).
 
+**Token rules (owner, 2026-10-22, from a measured analysis of 46 reviewed
+waves, 245 beads; one project's report: docs/notes/wave-token-analysis.md).**
+A recent wave cost ~6.1M price-weighted tokens: implementation 58%,
+coordinator 26%, review 10%, fix agents 5%. The levers, biggest first:
+
+- **Model mix: aim for about 2 of every 5 beads on `sonnet`.** Median bead
+  cost was 0.28M on sonnet against 1.02M on opus, and sonnet beads drew no
+  more confirmed review findings. Saves ~1.0 to 1.4M per wave.
+- **Review only risky waves.** Reviews found a real defect in 37 of 46
+  waves (0.66M per defect), so they stay for any wave touching load or
+  business rules, SQL, auth, ops, deploy or a write path. Skip the review
+  for waves of only docs, research, specs, mockups or small UI tidies
+  (~0.9M saved each). Do not review every second wave instead.
+- **No separate fix agents.** Apply review fixes yourself (or send them back
+  to the bead's own agent with SendMessage while its context is warm); fresh
+  fix agents cost ~0.69M each, mostly re-reading code.
+- **Recommend a restart: after 3 waves in one session, or once your context
+  passes ~200k tokens (or the harness has compacted it once), whichever
+  comes first.** Past ~200k each coordinator turn costs 30 to 40k. At the
+  next wave boundary (never mid-wave), tell the owner plainly, with the
+  reason, and offer the handoff: end-of-wave sweep done, beads synced, a
+  short summary of what is merged, deployed, planned and waiting on the
+  owner, so a new session can pick up from `bd` alone. Recommend once per
+  boundary; the owner decides. **Batch bookkeeping**: one Bash call
+  for several `wave` and `bd` commands, not one turn each (bookkeeping was
+  22% of coordinator spend).
+- **Split big beads; agents hand back at ~150k context** with a report of
+  what is left, rather than running to 300k+ (the top 10% of agents spent
+  30% of agent tokens). Point agents at the functions they need in big files
+  (`api.py`, `load.py`) instead of letting each re-read them whole.
+- **Lean agent testing:** tail-only test output, one mutation per new
+  assertion, and reviewers do not repeat the agent's mutations.
+
 Stop between waves, never mid-flight (a killed wave loses everything spent
 on it); when triage turns up only trivia; or when a review finds no
 correctness defects, since the next one is insurance. Treat a stated budget
@@ -44,7 +77,17 @@ Pick a model per bead when you spawn its agent (the Agent tool's `model`).
 - **Escalate:** a cheap-model bead that fails review or its tests is
   re-queued on the stronger model.
 - **The reviewer is always the stronger model**, or a cheap model's mistakes
-  go unseen.
+  go unseen. **Cost cap (owner, 2026-10-19): a reviewer, primary or second
+  opinion, costs no more than Opus 5.5** (`opus`, `sonnet`, `haiku`). Never
+  pass a pricier model such as `fable` for a review, even when it is the
+  session's model; pass `opus` explicitly.
+- **Choose for every bead, every wave** (owner, 2026-10-19). Many beads are
+  `sonnet` work; running everything on the strongest model wastes the
+  owner's usage. Say in the wave's picks which bead got which model.
+- **Second opinions.** Where other models are available, use them for
+  reviews and critiques where a differently trained reader helps: a second
+  review of a risky wave, a critique of a design note or plan. Never let a
+  second opinion replace the primary review. The same cost cap applies.
 
 Always pass `model` explicitly: an agent spawned without one inherits the
 session's model, so a session left on `sonnet` would silently run every bead
@@ -72,9 +115,31 @@ git worktree add -b wip/<id> .claude/worktrees/<id> HEAD
 
 **The harness's `isolation: "worktree"` branches from a PUSHED commit**, so
 that agent wouldn't see this session's local commits. A worktree agent may
-run the suite and commit to its own branch; never push, never merge. You
-merge `--no-ff`, re-run the suite on the merged tree, then remove the
-worktree and sweep.
+run targeted tests (see Running tests) and commit to its own branch; never
+push, never merge. You merge `--no-ff`, run the full suite once on the final
+merged tree, then remove the worktree and sweep.
+
+## Running tests
+
+Suites cost minutes each and compete for the same database container, so
+plan who runs what (owner, 2026-10-21; one wave ran the full suite in every
+agent, again after each merge, again in review):
+
+- **Agents run targeted tests only:** the test files for the code they
+  touch, plus the dependents of any shared function or contract they change
+  (grep for importers and callers, and name them in the prompt). They also
+  run their own mutation checks. They do not run the full suite.
+- **The coordinator runs the full suite once, on the final merged tree**,
+  not after each branch merge. Run the ops or script suite only when `ops/`
+  or the scripts changed, and the UI suite (`npm test`, `npm run build`)
+  only when `ui/` changed. After review fixes: targeted tests in the fix
+  branch, then one full run after the merge.
+- **Reviewers do not run the suite.** Tell them it passes. They run only the
+  test files they mutate or use to reproduce a finding.
+- **The merged-tree run is the safety net** for cross-branch breakage, so
+  never skip it. An agent changing a shared contract (a signature, a load
+  field, a signal shape) must run the tests of every dependent it can find;
+  a green targeted run does not prove the contract held.
 
 ## Prompts
 
@@ -90,6 +155,10 @@ the files it's expected to touch. Ask each agent to report exactly what it
 changed in files others share. Two agents editing one file is usually fine;
 two changing a *contract* in it is a semantic conflict no textual merge
 catches, and only the suite will find it.
+
+Tell agents to file anything they find outside their bead with
+`bd create ... --deps discovered-from:<their-id>`. The dashboard lists under
+"Opened by the wave" only beads carrying that link.
 
 ## Agents talking mid-wave
 
@@ -138,9 +207,32 @@ gap nobody can fill later.
 
 ```bash
 wave dispatch <name> --title "<what the wave is>" <ids...>   # as agents start
-wave deployed <name>                                       # right after the deploy
+wave review start <name>                                   # as the reviewer is spawned
+wave review done <name> --findings N --fixed M             # its fixes are in, suites pass
+wave merge start <name>                                    # before committing the wave
+wave merge done <name>                                     # right after the commit
+wave deployed <name>                                       # right after the push/deploy
+wave tokens <name> <id> <count> [--add]                    # as each agent finishes
 wave plan <name> --title "…" <ids...>                      # plan ahead, don't start
 ```
+
+- **Tokens.** When a bead's agent finishes, record the `total_tokens` (or
+  `subagent_tokens`) from its task notification. Know what it is: the
+  agent's final context size, not its spend (real price-weighted cost was a
+  median 4.75x that number), and the coordinator is not in it. Record it
+  anyway, for comparison between beads: `wave tokens <name> <id> <count>`. Use `--add` for
+  a retry, an escalation or a fix round sent back to the same bead, so the
+  count is the bead's whole cost. The dashboard shows tokens on `$`. Record
+  the reviewer under the id `review` (`wave tokens <name> review <count>`).
+- **Review and merge phases.** Call `wave review start` when you spawn the
+  reviewer, and `wave review done --findings N --fixed M` once its fixes are
+  in and the suites pass (N: findings it reported, M: how many you fixed).
+  Call `wave merge start` before committing the wave and `wave merge done`
+  after the commit (it takes trunk's sha; `--sha` to override), then
+  `wave deployed` after the push. A wave with no review simply skips
+  `wave review`: `wave merge start` doesn't need one. `done` refuses
+  without its `start`; starting a phase again overwrites it with a warning
+  and clears its end. All take `--at <ISO with offset>` when recording late.
 
 - `<name>` is the label suffix: `wave-12` is named `12`; a one-issue wave
   can use the issue's short id.
@@ -156,7 +248,12 @@ wave plan <name> --title "…" <ids...>                      # plan ahead, don't
 
 ## Review and merge
 
-Tell the reviewer the suite passes, so it skips what tests already catch;
+Record both phases (see Record the wave): `wave review start` /
+`wave review done` around the review, `wave merge start` /
+`wave merge done` around the commit.
+
+Tell the reviewer the suite passes, so it skips what tests already catch
+(and tell it not to run the suite: targeted files for mutations only);
 name the riskiest invariant first; ask for CONFIRMED vs PLAUSIBLE; ask it
 to say plainly which commits are clean, and not to manufacture findings.
 
@@ -189,6 +286,15 @@ stale-looking name.
 
 ## Harness traps
 
+**A symlink in a worktree can empty its target.** An agent that symlinks
+`ui/node_modules` (or any heavy directory) from the main checkout into its
+worktree puts the main copy at risk: `git worktree remove --force` followed
+the link and emptied the main checkout's `node_modules` (restored with
+`npm ci`). Before removing a worktree run `rm <worktree>/ui/node_modules`
+(no trailing slash, so only the link goes), and tell agents to do the same
+before they finish. For a deploy build, copy the built `ui/dist` into a
+clean worktree instead of linking `node_modules`.
+
 **Orphaned background waiters.** An agent that abandons a background run
 leaves an `until ...; do sleep N; done` shell polling a file nothing will
 write. They don't appear in `ListAgents`; look for what they wait on:
@@ -210,6 +316,21 @@ number moves; its report and branch are unaffected.
 committed. You can resume it with `SendMessage` and ask for the report it
 never delivered, saying the stop was your call and asking what it had *not*
 finished.
+
+**When the owner stops an agent**, it cannot be resumed: `SendMessage`
+refuses. Clean up and retry once with a fresh agent:
+
+1. Look at what it left (`git status`, `git diff`, its branch or worktree).
+   The work is uncommitted and untested; never commit it as is.
+2. Spawn one fresh agent with the original brief plus: "a previous agent was
+   stopped partway; its unverified changes are in these files; judge each part
+   against the brief, keep what is right, fix or finish the rest". Name where
+   it stopped if the notification says.
+3. If the retry is stopped or fails too, don't spawn a third: revert or park
+   the changes, leave the bead open with a comment, and tell the owner.
+
+Ask the owner first only if the stop might have meant "don't do this at all"
+rather than "not like this".
 
 ## Bookkeeping
 
