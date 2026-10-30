@@ -248,17 +248,27 @@ wave merge start <name>                                    # before committing t
 wave merge done <name>                                     # right after the commit
 wave deployed <name>                                       # right after the push/deploy
 wave tokens <name> <id> <count> [--add]                    # as each agent finishes
+wave usage <name> <id> [--input N] [--output N]            # as each agent finishes,
+           [--cache-read N] [--cache-write N]              # when the harness reports a
+           [--cost N] [--turns N] [--add]                  # real input/output/cost split
 wave plan <name> --title "…" <ids...>                      # plan ahead, don't start
 ```
 
-- **Tokens.** When a bead's agent finishes, record the `total_tokens` (or
-  `subagent_tokens`) from its task notification. Know what it is: the
+- **Tokens.** When a bead's agent finishes, record its spend. If the harness
+  only gives a single lump number (Claude Code's `total_tokens` or
+  `subagent_tokens` from the task notification), know what it is: the
   agent's final context size, not its spend (real price-weighted cost was a
   median 4.75x that number), and the coordinator is not in it. Record it
-  anyway, for comparison between beads: `wave tokens <name> <id> <count>`. Use `--add` for
-  a retry, an escalation or a fix round sent back to the same bead, so the
-  count is the bead's whole cost. The dashboard shows tokens on `$`. Record
-  the reviewer under the id `review` (`wave tokens <name> review <count>`).
+  anyway, for comparison between beads: `wave tokens <name> <id> <count>`.
+  If the harness instead reports a real input/output/cache-read/cache-write/
+  cost breakdown (for example, a native per-child usage report), use
+  `wave usage <name> <id> --input N --output N ...` instead: it is the more
+  accurate record, and it rewrites `wave tokens`'s total from input+output so
+  the dashboard's `$` view keeps working either way. Use `--add` on either
+  command for a retry, an escalation or a fix round sent back to the same
+  bead, so the recorded value is the bead's whole cost. Record
+  the reviewer under the id `review` (`wave tokens <name> review <count>` or
+  `wave usage <name> review --cost N ...`).
 - **Review and merge phases.** Call `wave review start` when you spawn the
   reviewer, and `wave review done --findings N --fixed M` once its fixes are
   in and the suites pass (N: findings it reported, M: how many you fixed).

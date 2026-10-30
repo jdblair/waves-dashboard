@@ -187,6 +187,50 @@ class WaveTest(unittest.TestCase):
         self.wave("tokens", "12", "demo-a", "12k", ok=False)
         self.assertEqual(self.kv(), {})
 
+    def test_usage_sets_fields_and_mirrors_tokens(self):
+        self.wave("usage", "12", "demo-a", "--input", "1000", "--output", "200",
+                  "--cache-read", "500", "--cost", "0.045", "--turns", "3")
+        self.assertEqual(self.kv(), {
+            "wave.12.usage.demo-a.input": "1000",
+            "wave.12.usage.demo-a.output": "200",
+            "wave.12.usage.demo-a.cache_read": "500",
+            "wave.12.usage.demo-a.cost": "0.045",
+            "wave.12.usage.demo-a.turns": "3",
+            "wave.12.tokens.demo-a": "1200",
+        })
+
+    def test_usage_add_sums_only_given_fields(self):
+        self.wave("usage", "12", "demo-a", "--input", "1000", "--output", "200",
+                  "--cache-read", "500", "--cost", "0.045", "--turns", "3")
+        self.wave("usage", "wave-12", "demo-a", "--input", "300", "--output", "50",
+                  "--add")
+        kv = self.kv()
+        self.assertEqual(kv["wave.12.usage.demo-a.input"], "1300")
+        self.assertEqual(kv["wave.12.usage.demo-a.output"], "250")
+        # untouched fields are unaffected by a partial --add
+        self.assertEqual(kv["wave.12.usage.demo-a.cache_read"], "500")
+        self.assertEqual(kv["wave.12.usage.demo-a.cost"], "0.045")
+        self.assertEqual(kv["wave.12.usage.demo-a.turns"], "3")
+        # tokens mirrors the current input+output, not a separately summed value
+        self.assertEqual(kv["wave.12.tokens.demo-a"], "1550")
+
+    def test_usage_needs_at_least_one_field(self):
+        r = self.wave("usage", "12", "demo-a", ok=False)
+        self.assertIn("needs at least one of", r.stderr)
+        self.assertEqual(self.kv(), {})
+
+    def test_usage_cost_only_does_not_touch_tokens(self):
+        self.wave("usage", "12", "demo-a", "--cost", "0.5")
+        self.assertEqual(self.kv(), {
+            "wave.12.usage.demo-a.cost": "0.5",
+            "wave.12.tokens.demo-a": "0",
+        })
+
+    def test_usage_refuses_negative(self):
+        r = self.wave("usage", "12", "demo-a", "--input", "-5", ok=False)
+        self.assertIn("must be 0 or more", r.stderr)
+        self.assertEqual(self.kv(), {})
+
     def test_phases_write_only_kv(self):
         self.wave("review", "start", "12")
         self.wave("review", "done", "12")
