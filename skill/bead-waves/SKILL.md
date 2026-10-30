@@ -53,7 +53,17 @@ coordinator 26%, review 10%, fix agents 5%. The levers, biggest first:
   boundary; the owner decides. **Batch bookkeeping**: one Bash call
   for several `wave` and `bd` commands, not one turn each (bookkeeping was
   22% of coordinator spend).
-- **Split big beads; agents hand back at ~150k context** with a report of
+- **Split big beads** (owner, 2026-10-30): cache reads grow with turns times
+  context, so one long agent costs more than the same work in small ones.
+  Split along seams in different code (a file, a module, a layer), each piece
+  with enough in its description that its agent needn't re-explore. For an
+  unclear bead, make the first piece a research bead whose finding goes into
+  the others' descriptions. Don't split pieces that read the same code; that
+  repeats the reads, and grouping them back is the same as the big bead.
+  **Dispatch sub-beads in the same wave only if they are independent** (no
+  shared contract, none needs another's output); otherwise put each
+  dependent piece in a later wave, after the one it needs has landed.
+- **Agents hand back at ~150k context** with a report of
   what is left, rather than running to 300k+ (the top 10% of agents spent
   30% of agent tokens). Point agents at the functions they need in big files
   (`api.py`, `load.py`) instead of letting each re-read them whole.
@@ -65,7 +75,10 @@ coordinator 26%, review 10%, fix agents 5%. The levers, biggest first:
   three small beads on the same file or module go to one agent, sequentially,
   so they share one cold start instead of re-reading the same code. Record
   each bead's tokens with `wave tokens ... --add`. Do not group beads that
-  need different models, or two that change the same contract.
+  need different models, or two that change the same contract. **Group only
+  related beads** (owner, 2026-10-30): a chained bead B re-reads all of A's
+  context on every turn, so an unrelated pair adds cache reads and saves
+  almost no writes. Unrelated beads get separate fresh agents.
 - **Short agent reports:** each agent's final report is at most ~200 words
   (see Prompts). The coordinator re-reads every report on every later turn.
 - **Lean agent testing:** tail-only test output, one mutation per new
