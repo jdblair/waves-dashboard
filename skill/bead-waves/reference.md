@@ -61,6 +61,56 @@ refuses. Clean up and retry once with a fresh agent:
 Ask the owner first only if the stop might have meant "don't do this at all"
 rather than "not like this".
 
+## Finding the real model registry (provider/id strings)
+
+Skill text and this project's `bd remember` notes name models loosely
+("gpt-5.6", "sonnet"). Turning that into an exact `provider/id` string that
+actually resolves takes two steps, and skipping either one burns a wasted
+dispatch (observed 2026-11-04: `nflx-openai/gpt-5.6-cyber` is listed in the
+local cache but returns a live 404; `nflx-openai/gpt-5.6-sol` — the one
+already recorded as `wave.1.model.review` — works).
+
+1. **List what the session's own registry advertises:**
+   `subagent({ action: "models" })` on pi. This is long (500+ entries) and
+   gets truncated in the tool's own display; it has no query/filter option
+   (`options.query`/`options.view` are rejected — don't try them). For a
+   full-text search of one family, read the on-disk cache files directly
+   instead of re-requesting the tool output:
+   - `~/.pi/agent/models-store.json` — per-provider model id lists (e.g.
+     `.openai.models[].id`) refreshed from each provider's own API.
+   - `~/.pi/agent/models-netflix.json` — the Netflix gateway's declared
+     provider prefixes (`nflx-openai`, `nflx-anthropic`, ...).
+   - `~/.pi/agent/auth.json` — which provider keys are actually configured
+     (confirms a provider is reachable at all before trying its models).
+
+   ```bash
+   python3 -c "
+   import json
+   d = json.load(open('/Users/jblair/.pi/agent/models-store.json'))
+   ids = [m.get('id') if isinstance(m, dict) else m for m in d['openai']['models']]
+   print([i for i in ids if '5.6' in i])
+   "
+   ```
+
+2. **This list is the provider's catalog, not a promise the Netflix gateway
+   (NCP) has wired that exact id up yet.** A name showing in
+   `models-store.json` can still 404 with `ModelDefinitionNotFound` when
+   dispatched. The only real confirmation is the 1-task dispatch the skill
+   already requires before fanning out a wave (see Pi harness specifics):
+
+   ```
+   subagent({ agent: "scout", model: "nflx-openai/gpt-5.6-sol",
+              task: "Reply with exactly the text 'model check ok' and nothing else." })
+   ```
+
+   A 404 `ModelDefinitionNotFound` means try a sibling id from the same
+   family's list (`-cyber`, `-luna`, `-sol`, `-terra`, etc.) and re-probe;
+   it does not mean the whole family is unavailable. Record the one that
+   actually resolves with `wave model <name> <id> <model>` as usual — and
+   prefer an id a prior wave already proved out (grep `bd kv list` for
+   `wave.*.model.*` before probing from scratch; `gpt-5.6-sol` was already
+   on record from a past reviewer assignment).
+
 ## Bookkeeping
 
 Read issue IDs back from the create command's output before citing them in

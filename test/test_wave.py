@@ -37,6 +37,10 @@ FAKE_BD = textwrap.dedent("""\
         kv[args[2]] = args[3]
     elif args[:2] == ["kv", "clear"]:
         kv.pop(args[2], None)
+    elif args[0] == "list":
+        print(open(os.path.join(state, "members.json")).read())
+    elif args[:2] == ["label", "remove"]:
+        pass
     else:
         sys.exit("fake bd: unhandled " + " ".join(args))
     json.dump(kv, open(kv_path, "w"))
@@ -75,6 +79,35 @@ class WaveTest(unittest.TestCase):
     def kv(self):
         path = os.path.join(self.dir, "kv.json")
         return json.load(open(path)) if os.path.exists(path) else {}
+
+    def members(self, *issues):
+        with open(os.path.join(self.dir, "members.json"), "w") as f:
+            json.dump([{"id": i, "status": st, "title": i} for i, st in issues], f)
+
+    def test_dispatch_refuses_an_existing_wave(self):
+        self.wave("dispatch", "12", "--at", "2026-10-18T08:00:00Z")
+        r = self.wave("dispatch", "12", ok=False)
+        self.assertIn("already has dispatched", r.stderr)
+        self.assertEqual(self.kv()["wave.12.dispatched"], "2026-10-18T08:00:00Z")
+        self.wave("dispatch", "12", "--force", "--at", "2026-10-19T08:00:00Z")
+        self.assertEqual(self.kv()["wave.12.dispatched"], "2026-10-19T08:00:00Z")
+
+    def test_check_flags_open_members(self):
+        self.members(("a-1", "closed"), ("a-2", "in_progress"))
+        r = self.wave("check", "9", ok=False)
+        self.assertIn("a-2", r.stdout)
+        self.members(("a-1", "closed"))
+        self.assertIn("all members closed", self.wave("check", "9").stdout)
+
+    def test_drop_clears_keys_and_unlabels(self):
+        self.members(("a-1", "closed"))
+        self.wave("dispatch", "78-test", "--at", "2026-10-18T08:00:00Z")
+        self.wave("model", "78-test", "a-1", "m")
+        self.wave("dispatch", "7", "--at", "2026-10-18T08:00:00Z")
+        self.wave("drop", "78-test")
+        self.assertEqual(list(self.kv()), ["wave.7.dispatched"])
+        calls = open(os.path.join(self.dir, "calls.log")).read()
+        self.assertIn('["label", "remove", "a-1", "wave-78-test"]', calls)
 
     def test_review_start_and_done_with_counts(self):
         self.wave("review", "start", "12", "--at", "2026-10-18T10:00:00+02:00")

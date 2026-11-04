@@ -73,6 +73,15 @@ Usage:
                                              wave.<name>.tokens.<id> is rewritten
                                              from input+output afterwards
   wave show [<name>]                         print the recorded facts
+  wave check <name>                          list member beads that are not closed;
+                                             exit 1 if any (run before closing a wave)
+  wave drop <name> [--keep-labels]           delete a wave: clear every wave.<name>.*
+                                             key and remove the wave-<name> label from
+                                             its beads (for test or abandoned waves)
+
+`plan` and `dispatch` refuse a name that already has a title or a dispatch
+time (`--force` to overwrite), so a guessed small number cannot clobber a
+real wave.
 
 Writes stay in the Dolt working set (auto-commit is off by default); commit
 and push with `bd dolt commit` / `bd dolt push` as usual.
@@ -151,7 +160,19 @@ def check_name(name):
     return name
 
 
+def refuse_existing(a, keys):
+    """Stop a plan/dispatch landing on a wave that already has records."""
+    if getattr(a, "force", False):
+        return
+    kv = kv_all()
+    found = [k for k in keys if f"wave.{a.name}.{k}" in kv]
+    if found:
+        sys.exit(f"wave: wave {a.name} already has {', '.join(found)}; "
+                 f"pick an unused name (see `wave show`) or pass --force")
+
+
 def cmd_plan(a):
+    refuse_existing(a, ("title", "dispatched"))
     added = label_beads(a.name, a.ids)
     if a.title:
         bd("kv", "set", f"wave.{a.name}.title", a.title)
@@ -159,6 +180,7 @@ def cmd_plan(a):
 
 
 def cmd_dispatch(a):
+    refuse_existing(a, ("dispatched",))
     added = label_beads(a.name, a.ids) if a.ids else []
     if a.title:
         bd("kv", "set", f"wave.{a.name}.title", a.title)
@@ -326,6 +348,34 @@ def cmd_show(a):
                 print(f"  {phase}\t{r.get(start, '-')}\t{r.get(end, '-')}")
 
 
+def members(name, statuses=None):
+    """Beads labelled wave-<name>, closed ones included."""
+    out = json.loads(bd("list", "--label", f"wave-{name}", "--all",
+                        "--limit", "0", "--json") or "[]")
+    return [i for i in out if statuses is None or i.get("status") in statuses]
+
+
+def cmd_check(a):
+    bad = [i for i in members(a.name) if i.get("status") != "closed"]
+    for i in bad:
+        print(f"{i['id']}\t{i.get('status')}\t{i.get('title', '')}")
+    if bad:
+        sys.exit(f"wave: wave {a.name} has {len(bad)} bead(s) not closed")
+    print(f"wave {a.name}: all members closed")
+
+
+def cmd_drop(a):
+    kv = kv_all()
+    prefix = f"wave.{a.name}."
+    keys = [k for k in kv if k.startswith(prefix)]
+    ids = [] if a.keep_labels else [i["id"] for i in members(a.name)]
+    for k in keys:
+        bd("kv", "clear", k)
+    if ids:
+        bd("label", "remove", *ids, f"wave-{a.name}")
+    print(f"wave {a.name}: dropped {len(keys)} key(s), unlabelled {len(ids)} bead(s)")
+
+
 def main():
     p = argparse.ArgumentParser(prog="wave", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -333,6 +383,8 @@ def main():
     s = sub.add_parser("plan")
     s.add_argument("name", type=check_name)
     s.add_argument("--title")
+    s.add_argument("--force", action="store_true",
+                   help="overwrite an existing wave's title")
     s.add_argument("ids", nargs="+")
     s.set_defaults(fn=cmd_plan)
 
@@ -340,6 +392,8 @@ def main():
     s.add_argument("name", type=check_name)
     s.add_argument("--title")
     s.add_argument("--at")
+    s.add_argument("--force", action="store_true",
+                   help="overwrite an existing dispatch time")
     s.add_argument("ids", nargs="*")
     s.set_defaults(fn=cmd_dispatch)
 
@@ -404,6 +458,16 @@ def main():
     s = sub.add_parser("show")
     s.add_argument("name", nargs="?", type=check_name)
     s.set_defaults(fn=cmd_show)
+
+    s = sub.add_parser("check")
+    s.add_argument("name", type=check_name)
+    s.set_defaults(fn=cmd_check)
+
+    s = sub.add_parser("drop")
+    s.add_argument("name", type=check_name)
+    s.add_argument("--keep-labels", action="store_true",
+                   help="leave the wave-<name> label on its beads")
+    s.set_defaults(fn=cmd_drop)
 
     a = p.parse_args()
     a.fn(a)
