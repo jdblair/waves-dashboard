@@ -5,39 +5,66 @@ description: Close many issues in one session by working up to 5 at a time in pa
 
 # bead-waves
 
-Close the beads that don't need a decision from the owner. Work at most 5 at a
-time, each in its own subagent. After every wave, merge it and have a fresh
-agent review it, fix what the review finds, then start the next wave.
-Invoking this skill is the grant of autonomy: pick the beads, say what you
-picked and why, and continue. `/bead-waves <ids...>` works those beads instead
-of picking. Stop between waves, never mid-wave, and ask for a cap when the
-owner says "as many as possible".
+Close the beads that don't need a decision from the owner, at most 5 at a
+time, one wave at a time. Invoking this skill is the grant of autonomy: pick
+the beads, say what you picked and why, and continue. `/bead-waves <ids...>`
+works those beads instead of picking.
 
-## Controller and wave-runner
+## What the tooling already does
 
-Keep the controlling session's context clean. The controller picks the roster
-and spawns **one wave-runner subagent per wave** (strong model), then reads its
-short report. The controller does not code, review or apply fixes itself, even
-when a finding looks small.
+`wave-workflow.js` (this directory) is the wave-runner. One dispatch runs
+claim -> parallel workers -> merge -> review -> fixes -> `wave check` ->
+close as fixed stages; the file's header has a worked example.
 
-The wave-runner owns the whole wave: the `wave` bookkeeping, the worker
-subagents, the merge and full suite, the reviewer, and the review's fixes. It
-never asks the owner anything mid-wave. A bead that needs the owner is
-**parked**: marked and commented with the question, left open, and the rest of
-the wave finishes. Its final report (~200 words) gives the merged sha, suite
-result, findings and fixes, and the parked beads with their questions.
+```js
+subagent({ workflow: "<abs path>/wave-workflow.js", args: {
+  name, title, roster: [{ id, model, task }], skipReview, reviewModel } })
+```
 
-## Rules
+Leave it async: a workflow awaited with `async: false` cannot relay a child's
+`contact_supervisor` question. Each worker runs in its own `worktree: true`
+isolation (one writer per bead); that needs the repo checkout clean at
+dispatch time (untracked files count) or the whole worker group is rejected
+before any child starts, so commit or stash stray work first. The script
+refuses a roster entry with no explicit model, gives every child the
+host-zone and worktree-symlink rules, leaves parked beads open, and makes
+the close stage run `wave check`. The
+`wave` CLI (`wave --help`) owns the bookkeeping schema and refuses a name
+that already has records. None of that belongs in a dispatch; each
+`roster[].task` carries only that bead's cold-start brief — goal, files,
+acceptance, and when to park.
 
-- **Backlog is `bd ready` by priority.** Don't invent a holding wave
-  (`wave-anytime`) for beads you aren't working yet.
-- **Always pass `model` explicitly** for each worker; an agent spawned without
-  one inherits the session's. Match it to the bead: small and clear to a
-  cheaper model, design judgment or a shared contract to a stronger one. The
-  reviewer is at least as strong as the strongest worker.
-- **Record via `wave`** (see `wave --help`): `wave show` first and pick an
-  unused name, and run `wave check <name>` before calling a wave done.
-  `wave drop` removes a wave made by mistake.
+## Yours to judge
 
-`reference.md` has the end-of-wave sweep and worktree traps; `history.md` is
-the old long version of this skill, for grepping only.
+- **Pick from `bd ready` by priority.** No holding wave for beads you aren't
+  working yet.
+- **Pick each bead's model.** Clear, contained work to a cheaper model;
+  design judgment, a shared contract or a write path to a stronger one; the
+  reviewer at least as strong as the strongest worker. Probe an unfamiliar
+  id with a one-line `scout` dispatch first — a listed model can still 404.
+- **Stay reachable while a wave runs** and answer its children through
+  `subagent_supervisor`; host-zone (Postgres/Docker) runs need your zone.
+  Don't code, review or apply fixes yourself, even when a finding looks
+  small.
+- **Stop between waves, never mid-wave.** A parked bead comes back in the
+  wave's report with its question; that is the owner's decision point, not
+  an interruption. Ask for a cap when the owner says "as many as possible".
+
+## What no tool can reach
+
+The workflow sandbox has no shell, so these stay with whoever has bash:
+
+- **Sweep at the end of a wave, never mid-wave** — worktrees share a warm
+  database. The evidence is `git branch --merged` plus worktree existence,
+  not age: remove merged worktrees and their per-worktree container, volume
+  and network by exact name, and keep the main checkout's. Run
+  `rm <worktree>/ui/node_modules` (no trailing slash) before removing a
+  worktree; `git worktree remove --force` follows a symlink and empties the
+  main checkout's copy.
+- **A child you stopped cannot be resumed.** `steer` a live one, `resume` a
+  finished one. After a stop, read what it left uncommitted, then retry once
+  with a fresh child told to judge that work against the brief; if the retry
+  also fails, revert, leave the bead open with a comment, and tell the owner.
+
+`history.md` is the old long version of this skill, for grepping only; the
+`reference.md` it points at has been folded into this file.
